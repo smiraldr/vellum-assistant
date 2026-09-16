@@ -16,6 +16,17 @@ import type { ToolResultImage } from "@/domains/chat/components/chat-attachments
 import type { DisplayAttachment } from "@/types/attachment-types";
 
 type ContentResult = { data: Blob | null; error: { message: string } | null };
+type MetadataResult = {
+  data: {
+    id: string;
+    filename: string;
+    mimeType: string;
+    sizeBytes: number;
+    kind: string;
+    data: null;
+  } | null;
+  error: { message: string } | null;
+};
 
 const respondsWithBytes = async (): Promise<ContentResult> => ({
   data: new Blob(["image-bytes"]),
@@ -24,6 +35,17 @@ const respondsWithBytes = async (): Promise<ContentResult> => ({
 
 /** What the content endpoint answers, swapped per test. */
 let contentResponse: () => Promise<ContentResult> = respondsWithBytes;
+let metadataResponse: () => Promise<MetadataResult> = async () => ({
+  data: {
+    id: "att-dl",
+    filename: "file-read.png",
+    mimeType: "image/png",
+    sizeBytes: 11,
+    kind: "image",
+    data: null,
+  },
+  error: null,
+});
 
 // Mock only the daemon content endpoint; keep the rest of the generated SDK
 // real so any other consumer in the module graph is unaffected.
@@ -34,10 +56,17 @@ const attachmentsByIdContentGet = mock(
     throwOnError?: boolean;
   }): Promise<ContentResult> => contentResponse(),
 );
+const attachmentsByIdGet = mock(
+  async (_opts: {
+    path: { assistant_id: string; id: string };
+    throwOnError?: boolean;
+  }): Promise<MetadataResult> => metadataResponse(),
+);
 
 mock.module("@/generated/daemon/sdk.gen", () => ({
   ...daemonSdk,
   attachmentsByIdContentGet,
+  attachmentsByIdGet,
 }));
 
 // happy-dom doesn't implement object URLs.
@@ -106,7 +135,19 @@ function renderStrip(
 afterEach(() => {
   cleanup();
   contentResponse = respondsWithBytes;
+  metadataResponse = async () => ({
+    data: {
+      id: "att-dl",
+      filename: "file-read.png",
+      mimeType: "image/png",
+      sizeBytes: 11,
+      kind: "image",
+      data: null,
+    },
+    error: null,
+  });
   attachmentsByIdContentGet.mockClear();
+  attachmentsByIdGet.mockClear();
   saveFileMock.mockClear();
   createObjectUrl.mockClear();
   revokeObjectUrl.mockClear();
@@ -219,7 +260,22 @@ describe("ToolResultImages referenced media", () => {
     expect(attachmentsByIdContentGet).not.toHaveBeenCalled();
   });
 
-  test("downloading a referenced image fetches its bytes by id", async () => {
+  test("downloading a referenced image uses its canonical metadata", async () => {
+    contentResponse = async () => ({
+      data: new Blob(["jpeg-bytes"], { type: "image/jpeg" }),
+      error: null,
+    });
+    metadataResponse = async () => ({
+      data: {
+        id: "att-dl",
+        filename: "capture.jpeg",
+        mimeType: "image/jpeg",
+        sizeBytes: 10,
+        kind: "image",
+        data: null,
+      },
+      error: null,
+    });
     const toolCall: ChatMessageToolCall = {
       id: "tc-ref-dl",
       name: "file_read",
@@ -236,9 +292,14 @@ describe("ToolResultImages referenced media", () => {
     await waitFor(() => {
       expect(saveFileMock).toHaveBeenCalledTimes(1);
     });
-    // Saved from the fetched blob (referenced media has no inline data URL).
-    expect(saveFileMock.mock.calls[0]![0]).toBeInstanceOf(Blob);
-    expect(saveFileMock.mock.calls[0]![1]).toBe("file-read.png");
+    // Saved from the fetched blob and named by the canonical metadata rather
+    // than the projection's PNG fallback.
+    const saved = saveFileMock.mock.calls[0]![0] as Blob;
+    expect(saved).toBeInstanceOf(Blob);
+    expect(saved.type).toBe("image/jpeg");
+    expect(await saved.text()).toBe("jpeg-bytes");
+    expect(saveFileMock.mock.calls[0]![1]).toBe("capture.jpeg");
+    expect(attachmentsByIdGet).toHaveBeenCalledTimes(1);
   });
 
   test("opens the gallery at the clicked image's position when two calls name one id", () => {

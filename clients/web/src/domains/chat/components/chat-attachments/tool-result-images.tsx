@@ -189,6 +189,8 @@ export interface ToolResultImage extends DisplayAttachment {
   occurrenceKey: string;
   /** Producing tool-call occurrence, stable across inline-to-reference swaps. */
   toolCallId: string;
+  /** Resolve canonical filename and MIME metadata before saving this reference. */
+  resolveReferenceMetadata?: boolean;
 }
 
 /**
@@ -207,9 +209,9 @@ export interface ToolResultImage extends DisplayAttachment {
  * Filenames use the server's `<tool-prefix>.<ext>` naming; a tool that emits
  * more than one image additionally gets an index suffix so the names stay
  * distinct (the server keeps same-named attachments apart by id instead).
- * Referenced entries have no wire-carried MIME/size, so they default to a
- * generic image type — the fetched blob supplies the real bytes for preview
- * and download.
+ * Referenced entries have no wire-carried filename, MIME, or size, so their
+ * projected values are display fallbacks. Downloads resolve the canonical
+ * stored metadata before saving the fetched bytes.
  */
 export function projectToolResultImages(
   toolCalls: ChatMessageToolCall[],
@@ -240,6 +242,7 @@ export function projectToolResultImages(
         mimeType: "image/png",
         sizeBytes: 0,
         previewUrl: null,
+        resolveReferenceMetadata: true,
       });
     });
     base64Images.forEach((imageData) => {

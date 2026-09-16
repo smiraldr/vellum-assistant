@@ -10,11 +10,13 @@ import { describe, expect, test } from "bun:test";
 import {
   filterCardBackedProcessCalls,
   isLastActivityGroup,
+  isLatestTranscriptMessage,
   resolveActivityGroupIndex,
   type ProcessCardBacking,
 } from "@/domains/chat/hooks/use-live-activity-group";
 import type { ContentBlockGroup } from "@/domains/chat/transcript/message-content";
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
+import type { DisplayMessage } from "@/domains/chat/types/types";
 import type { ToolCallCardItem } from "@/domains/chat/utils/tool-call-card-utils";
 
 function emptyBacking(): ProcessCardBacking {
@@ -59,12 +61,10 @@ const BG_BASH: ChatMessageToolCall = {
 function itemsFor(toolCalls: ChatMessageToolCall[]): ToolCallCardItem[] {
   return [
     { kind: "thinking", text: "planning" },
-    ...toolCalls.map(
-      (tc): ToolCallCardItem => ({
-        kind: "toolCall",
-        toolCall: tc,
-      }),
-    ),
+    ...toolCalls.map((tc): ToolCallCardItem => ({
+      kind: "toolCall",
+      toolCall: tc,
+    })),
   ];
 }
 
@@ -155,6 +155,41 @@ describe("isLastActivityGroup", () => {
     expect(
       isLastActivityGroup([{ type: "text", text: "visible response" }], 0),
     ).toBe(false);
+  });
+});
+
+describe("isLatestTranscriptMessage", () => {
+  const message = (
+    id: string,
+    mergedMessageIds?: string[],
+  ): DisplayMessage => ({
+    id,
+    role: "assistant",
+    mergedMessageIds,
+  });
+
+  test("matches a cloned latest row by stable identity", () => {
+    const selected = message("assistant-latest");
+    const clonedLatest = { ...selected };
+
+    expect(isLatestTranscriptMessage(selected, [clonedLatest])).toBe(true);
+  });
+
+  test("does not mistake a distinct older row for the latest", () => {
+    expect(
+      isLatestTranscriptMessage(message("assistant-older"), [
+        message("assistant-older"),
+        message("assistant-latest"),
+      ]),
+    ).toBe(false);
+  });
+
+  test("matches a latest merged row through its donor identity", () => {
+    expect(
+      isLatestTranscriptMessage(message("assistant-donor"), [
+        message("assistant-anchor", ["assistant-donor"]),
+      ]),
+    ).toBe(true);
   });
 });
 
