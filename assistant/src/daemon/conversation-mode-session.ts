@@ -6,6 +6,7 @@ import type {
   ModeSessionMode,
   ModeSessionSummary,
 } from "../api/mode-session.js";
+import { modeSessionRowStartsDisplay } from "../api/mode-session.js";
 import { updateMessageMetadata } from "../persistence/conversation-crud.js";
 import {
   advanceConversationModeSessionRevision,
@@ -808,10 +809,9 @@ export class ConversationModeSessionCoordinator {
       return false;
     }
     return this.#mutateActiveSession(owner.id, (session) => {
-      const eligibleFirstRows =
-        owner.mode === "live_vision"
-          ? rows
-          : rows.filter((row) => row.startsDisplayBoundary);
+      const eligibleFirstRows = rows.filter((row) =>
+        modeSessionRowStartsDisplay(owner.mode, row.startsDisplayBoundary),
+      );
       const earliest = eligibleFirstRows.reduce<TrackedRow | undefined>(
         (current, row) => (!current || row.at < current.at ? row : current),
         undefined,

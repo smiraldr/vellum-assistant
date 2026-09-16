@@ -142,6 +142,7 @@ import {
   type VoiceEndpointSource,
 } from "./live-voice-metrics.js";
 import {
+  type LiveVoicePhotoResult,
   persistAmbientSightFrame,
   persistLiveVoicePhoto,
 } from "./live-voice-photo.js";
@@ -1873,14 +1874,16 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       this.lastSpeechStartedAtMs === null
         ? null
         : receivedAtMs - this.lastSpeechStartedAtMs;
-    void persistAmbientSightFrame(
-      this.conversationId,
-      frame.attachmentId,
-      "voice",
-      undefined,
-      undefined,
-      cameraToken?.owner,
-    ).then((result) => {
+    const settleFrame = (
+      result: LiveVoicePhotoResult,
+      rejection?: unknown,
+    ): void => {
+      if (rejection !== undefined) {
+        log.warn(
+          { err: rejection, attachmentId: frame.attachmentId },
+          "Sight frame persistence rejected unexpectedly",
+        );
+      }
       try {
         this.cameraModeSessions?.finishFrame(
           cameraToken,
@@ -1926,7 +1929,18 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
           recoverable: true,
         });
       }
-    });
+    };
+    void persistAmbientSightFrame(
+      this.conversationId,
+      frame.attachmentId,
+      "voice",
+      undefined,
+      undefined,
+      cameraToken?.owner,
+    ).then(
+      (result) => settleFrame(result),
+      (err) => settleFrame({ ok: false }, err),
+    );
   }
 
   private async startSightSession(

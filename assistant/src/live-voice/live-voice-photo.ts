@@ -745,11 +745,36 @@ function persistStandaloneImage(
   let modeSession: ModeSession | undefined;
   if (modeSessionSource) {
     const conversation = findConversation(conversationId);
-    const owner = conversation?.modeSessions.claimTurn(
-      requestId,
-      modeSessionSource,
-      Date.now(),
-    );
+    modeSessionCoordinator = conversation?.modeSessions;
+    let owner: ModeSession | undefined;
+    try {
+      owner = modeSessionCoordinator?.claimTurn(
+        requestId,
+        modeSessionSource,
+        Date.now(),
+      );
+    } catch (err) {
+      log.warn(
+        { err, conversationId, attachmentId },
+        "Standalone camera image could not claim its accepted session owner",
+      );
+      try {
+        modeSessionCoordinator?.releaseTurn(requestId);
+      } catch (releaseErr) {
+        log.warn(
+          { err: releaseErr, conversationId, attachmentId },
+          "Standalone camera image could not release its failed session claim",
+        );
+      }
+      reclaimOrDefer(
+        conversationId,
+        [attachmentId],
+        persistOptions.content,
+        requestId,
+        kind,
+      );
+      return Promise.resolve({ ok: false });
+    }
     if (!conversation || owner?.id !== modeSessionSource.id) {
       log.warn(
         { conversationId, attachmentId },
@@ -764,7 +789,6 @@ function persistStandaloneImage(
       );
       return Promise.resolve({ ok: false });
     }
-    modeSessionCoordinator = conversation.modeSessions;
     modeSession = { id: owner.id, mode: owner.mode };
   }
   return enqueueStandaloneImagePersist(
@@ -784,7 +808,14 @@ function persistStandaloneImage(
         modeSession,
       ),
   ).finally(() => {
-    modeSessionCoordinator?.releaseTurn(requestId);
+    try {
+      modeSessionCoordinator?.releaseTurn(requestId);
+    } catch (err) {
+      log.warn(
+        { err, conversationId, attachmentId },
+        "Standalone camera image could not release its session owner",
+      );
+    }
   });
 }
 

@@ -344,4 +344,81 @@ describe("conversation mode session store", () => {
       lastActivityAt: 130,
     });
   });
+
+  test("repairs Ambient to an assistant-first boundary while Live keeps its leading frame", () => {
+    const { sqlite, options } = createStore();
+    beginConversationModeSession(
+      {
+        id: "ambient-session",
+        conversationId: "conv-123",
+        mode: "ambient",
+        sourceStartedAt: 100,
+      },
+      options,
+    );
+    beginConversationModeSession(
+      {
+        id: "live-session",
+        conversationId: "conv-123",
+        mode: "live_vision",
+        sourceStartedAt: 200,
+      },
+      options,
+    );
+    sqlite.exec(/* sql */ `
+      INSERT INTO messages (id, conversation_id, role, created_at, metadata)
+      VALUES
+        ('ambient-deleted', 'conv-123', 'user', 105, '{"modeSession":{"mode":"ambient","id":"ambient-session"}}'),
+        ('ambient-frame', 'conv-123', 'user', 110, '{"modeSession":{"mode":"ambient","id":"ambient-session"}}'),
+        ('ambient-assistant', 'conv-123', 'assistant', 120, '{"modeSession":{"mode":"ambient","id":"ambient-session"}}'),
+        ('live-deleted', 'conv-123', 'user', 205, '{"modeSession":{"mode":"live_vision","id":"live-session"}}'),
+        ('live-frame', 'conv-123', 'user', 210, '{"modeSession":{"mode":"live_vision","id":"live-session"}}'),
+        ('live-assistant', 'conv-123', 'assistant', 220, '{"modeSession":{"mode":"live_vision","id":"live-session"}}');
+    `);
+    updateConversationModeSessionBoundaries(
+      {
+        id: "ambient-session",
+        conversationId: "conv-123",
+        expectedRevision: 1,
+        firstIncluded: { at: 105, messageId: "ambient-deleted" },
+        lastActivityAt: 120,
+        lastOwnedMessageId: "ambient-assistant",
+      },
+      options,
+    );
+    updateConversationModeSessionBoundaries(
+      {
+        id: "live-session",
+        conversationId: "conv-123",
+        expectedRevision: 1,
+        firstIncluded: { at: 205, messageId: "live-deleted" },
+        lastActivityAt: 220,
+        lastOwnedMessageId: "live-assistant",
+      },
+      options,
+    );
+    sqlite.exec(
+      "DELETE FROM messages WHERE id IN ('ambient-deleted', 'live-deleted')",
+    );
+
+    expect(repairConversationModeSessionBoundaries("conv-123", options)).toBe(
+      2,
+    );
+    expect(
+      getConversationModeSession("conv-123", "ambient-session", options),
+    ).toMatchObject({
+      firstIncludedAt: 120,
+      firstIncludedMessageId: "ambient-assistant",
+      lastOwnedMessageId: "ambient-assistant",
+      lastActivityAt: 120,
+    });
+    expect(
+      getConversationModeSession("conv-123", "live-session", options),
+    ).toMatchObject({
+      firstIncludedAt: 210,
+      firstIncludedMessageId: "live-frame",
+      lastOwnedMessageId: "live-assistant",
+      lastActivityAt: 220,
+    });
+  });
 });

@@ -8,6 +8,14 @@ export const ModeSessionModeSchema = z.enum([
 ]);
 export type ModeSessionMode = z.infer<typeof ModeSessionModeSchema>;
 
+/** Whether a stamped row may start the user-visible span for this mode. */
+export function modeSessionRowStartsDisplay(
+  mode: ModeSessionMode,
+  startsDisplayBoundary: boolean,
+): boolean {
+  return mode === "live_vision" || startsDisplayBoundary;
+}
+
 export const ModeSessionStatusSchema = z.enum([
   "active",
   "completed",

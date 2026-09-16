@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import {
   type ModeSessionMode,
+  modeSessionRowStartsDisplay,
   type ModeSessionStatus,
   type ModeSessionSummary,
   ModeSessionSummarySchema,
@@ -385,10 +386,10 @@ export function repairConversationModeSessionBoundaries(
           continue;
         }
         const at = readMessageSentAt(message.metadata) ?? message.createdAt;
-        const startsDisplayBoundary =
-          session.mode === "live_vision" ||
-          session.mode === "ambient" ||
-          message.role === "assistant";
+        const startsDisplayBoundary = modeSessionRowStartsDisplay(
+          session.mode,
+          message.role === "assistant",
+        );
         const current = boundaries.get(owner.id);
         if (!current) {
           boundaries.set(owner.id, {
