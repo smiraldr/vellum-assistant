@@ -167,7 +167,7 @@ describe("ActivityStepsPanel — level 1 timeline", () => {
     expect(getByText("2 steps")).toBeTruthy();
   });
 
-  test("active trailing thinking settles when the turn becomes idle", () => {
+  test("active trailing thinking settles while awaiting user input", () => {
     const items: ToolCallCardItem[] = [
       { kind: "toolCall", toolCall: BASH },
       { kind: "thinking", text: "Preparing the next step" },
@@ -183,7 +183,7 @@ describe("ActivityStepsPanel — level 1 timeline", () => {
     expect(getAllByText("Thinking").length).toBeGreaterThan(0);
     expect(queryByText(/Worked for/)).toBeNull();
 
-    act(() => useTurnStore.setState({ phase: "idle" }));
+    act(() => useTurnStore.setState({ phase: "awaiting_user_input" }));
     expect(getByText(/Worked for/)).toBeTruthy();
   });
 
