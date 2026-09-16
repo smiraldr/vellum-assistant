@@ -293,7 +293,18 @@ function withSession(
     modeSession,
     modeSessionActivity: { firstAt: timestamp, lastAt: timestamp },
   };
-  return { ...item, message };
+  const cameraFrames = item.cameraFrames?.map((frame) => {
+    const frameTimestamp = frame.timestamp ?? timestamp;
+    return {
+      ...frame,
+      modeSession,
+      modeSessionActivity: {
+        firstAt: frameTimestamp,
+        lastAt: frameTimestamp,
+      },
+    };
+  });
+  return { ...item, message, cameraFrames };
 }
 
 const SESSION_ITEMS: TranscriptItem[] = [
