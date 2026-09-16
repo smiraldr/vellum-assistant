@@ -88,10 +88,13 @@ export function ConversationAssetsPill({
   // A conversation with nothing to show has no trigger, and neither does one
   // whose sources have not settled: counting nothing yet is not the same as
   // holding nothing, and a partial total that changes as the other sources
-  // land is worse than none. A failed load keeps it: the panel is where the
-  // user finds out why.
+  // land is worse than none. A failed load counts nothing either, and a
+  // trigger that only opens a panel to report a failure the user never asked
+  // about is noise in the header: it goes too. What a failed load keeps is the
+  // trigger for the assets that did reach the client, labelled "unavailable"
+  // so the total it names is not read as the whole of them.
   const failedToLoad = status === "error";
-  if (status === "pending" || (count === 0 && !failedToLoad)) {
+  if (status === "pending" || count === 0) {
     return null;
   }
 
