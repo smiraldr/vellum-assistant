@@ -56,6 +56,21 @@ describe("PhaseGroupedStepList — empty input", () => {
 });
 
 describe("PhaseGroupedStepList — phase grouping", () => {
+  test("localized action wording does not split the stable Working phase", () => {
+    const steps = [
+      { ...bash("raw click"), actionDisplayKey: "click" as const },
+      { ...bash("raw type"), actionDisplayKey: "type" as const },
+    ];
+    const { getAllByTestId, getByText, queryByText } = render(
+      <PhaseGroupedStepList steps={steps} />,
+    );
+
+    expect(getAllByTestId("phase-section")).toHaveLength(1);
+    expect(getByText("Clicking")).toBeTruthy();
+    expect(getByText("Typing")).toBeTruthy();
+    expect(queryByText("raw click")).toBeNull();
+  });
+
   test("two consecutive Thinking steps collapse into one phase with two pills", () => {
     const steps: ToolCallCardStep[] = [
       thinking("Forming a query"),

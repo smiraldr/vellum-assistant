@@ -335,12 +335,18 @@ const deleteMessageByIdMock = mock(() => ({
   segmentIds: [],
   deletedSummaryIds: [],
 }));
-const reserveMessageMock = mock(async () => ({ id: "msg-reserve" }));
+const reserveMessageMock = mock(async () => ({
+  id: "msg-reserve",
+  createdAt: 1_700_000_000_050,
+}));
 /** Persisted rows the loop reads back. Empty unless a test seeds one. */
 let mockStoredMessages: unknown[] = [];
 const updateMessageContentMock = mock(() => {});
 const finalizeMessageContentMock = mock(() => {});
-const addMessageMock = mock(() => ({ id: "mock-msg-id" }));
+const addMessageMock = mock(() => ({
+  id: "mock-msg-id",
+  createdAt: 1_700_000_000_100,
+}));
 const updateConversationContextWindowMock = mock(() => {});
 mock.module("../persistence/conversation-crud.js", () => ({
   setConversationProcessingStartedAt: () => {},
@@ -768,6 +774,18 @@ function makeCtx(
     toolExecutor,
   });
 
+  const modeSessions = {
+    getTurnOwner: () => undefined,
+    getTerminalDisposition: () => undefined,
+    keepsSessionOpenAfterTurn: () => false,
+    trackPersistedRow: () => false,
+    recordStructuralWait: () => false,
+    beginDraining: () => false,
+    finalizeTurn: () => false,
+    releaseTurn: () => false,
+    transferTurn: () => false,
+  } as unknown as Conversation["modeSessions"];
+
   const ctx = asConversation({
     conversationId: "test-conv",
     messages: [
@@ -815,6 +833,7 @@ function makeCtx(
     pendingSurfaceActions: new Map(),
     surfaceActionRequestIds: new Set<string>(),
     currentTurnSurfaces: [],
+    modeSessions,
 
     workingDir: "/tmp",
     channelCapabilities: undefined,
@@ -1053,7 +1072,177 @@ beforeEach(() => {
   resetPluginRegistryAndRegisterDefaults();
 });
 
+function makeModeSessionDouble(options?: {
+  terminalDisposition?: {
+    status: "completed" | "interrupted";
+    endReason: string;
+  };
+  structuralWait?: boolean;
+  sourceLifetime?: boolean;
+}) {
+  const owner = { id: "session-1", mode: "computer_use" as const };
+  const trackPersistedRow = mock(() => true);
+  const recordStructuralWait = mock(() => options?.structuralWait ?? false);
+  const beginDraining = mock(() => true);
+  const finalizeTurn = mock(() => true);
+  const releaseTurn = mock(() => true);
+  const transferTurn = mock(() => true);
+  const coordinator = {
+    getTurnOwner: () => owner,
+    getTerminalDisposition: () => options?.terminalDisposition,
+    keepsSessionOpenAfterTurn: () => options?.sourceLifetime ?? false,
+    trackPersistedRow,
+    recordStructuralWait,
+    beginDraining,
+    finalizeTurn,
+    releaseTurn,
+    transferTurn,
+  } as unknown as Conversation["modeSessions"];
+  return {
+    coordinator,
+    trackPersistedRow,
+    recordStructuralWait,
+    beginDraining,
+    finalizeTurn,
+    releaseTurn,
+    transferTurn,
+  };
+}
+
 describe("session-agent-loop", () => {
+  describe("mode session settlement", () => {
+    test("finalizes an owned turn after its assistant output settles", async () => {
+      const sessions = makeModeSessionDouble();
+      const ctx = makeCtx({ modeSessions: sessions.coordinator });
+
+      await runAgentLoopImpl(ctx, "hello", "msg-1", () => {});
+
+      expect(sessions.trackPersistedRow).toHaveBeenCalledWith(
+        "test-req",
+        expect.any(String),
+        expect.anything(),
+      );
+      expect(sessions.beginDraining).toHaveBeenCalledWith("test-req");
+      expect(sessions.finalizeTurn).toHaveBeenCalledWith({
+        turnId: "test-req",
+        status: "completed",
+        endedAt: expect.any(Number),
+        endReason: "turn_settled",
+        lastActivityAt: expect.any(Number),
+      });
+    });
+
+    test("releases a retired source only after final output settles", async () => {
+      const sessions = makeModeSessionDouble({
+        terminalDisposition: {
+          status: "interrupted",
+          endReason: "browser_cancelled",
+        },
+      });
+      const ctx = makeCtx({ modeSessions: sessions.coordinator });
+
+      await runAgentLoopImpl(ctx, "hello", "msg-1", () => {});
+
+      expect(sessions.beginDraining).toHaveBeenCalledWith("test-req");
+      expect(sessions.releaseTurn).toHaveBeenCalledWith("test-req");
+      expect(sessions.finalizeTurn).not.toHaveBeenCalled();
+    });
+
+    test("keeps a source-lifetime session active across a cancelled turn", async () => {
+      const abortController = new AbortController();
+      const provider: Provider = {
+        name: "mock",
+        async sendMessage(_messages, options) {
+          options?.onEvent?.({ type: "text_delta", text: "partial" });
+          abortController.abort();
+          return textResponse("partial");
+        },
+      };
+      const sessions = makeModeSessionDouble({ sourceLifetime: true });
+      const cancelledCtx = makeCtx({
+        loopProvider: provider,
+        abortController,
+        modeSessions: sessions.coordinator,
+      });
+
+      await runAgentLoopImpl(cancelledCtx, "hello", "msg-1", () => {});
+
+      expect(sessions.releaseTurn).toHaveBeenCalledWith("test-req");
+      expect(sessions.beginDraining).not.toHaveBeenCalled();
+      expect(sessions.finalizeTurn).not.toHaveBeenCalled();
+
+      const laterCtx = makeCtx({ modeSessions: sessions.coordinator });
+      await runAgentLoopImpl(laterCtx, "later", "msg-2", () => {});
+
+      expect(sessions.releaseTurn).toHaveBeenCalledTimes(2);
+      expect(sessions.finalizeTurn).not.toHaveBeenCalled();
+    });
+
+    test("keeps a source-lifetime session active across a failed turn", async () => {
+      const sessions = makeModeSessionDouble({ sourceLifetime: true });
+      const failedCtx = makeCtx({
+        loopProvider: {
+          name: "mock",
+          async sendMessage() {
+            throw new Error("provider failure");
+          },
+        } as Provider,
+        modeSessions: sessions.coordinator,
+      });
+
+      await runAgentLoopImpl(failedCtx, "hello", "msg-1", () => {});
+
+      expect(sessions.releaseTurn).toHaveBeenCalledWith("test-req");
+      expect(sessions.beginDraining).not.toHaveBeenCalled();
+      expect(sessions.finalizeTurn).not.toHaveBeenCalled();
+    });
+
+    test("keeps an owned turn open for an exact structural response", async () => {
+      const sessions = makeModeSessionDouble({ structuralWait: true });
+      const ctx = makeCtx({
+        modeSessions: sessions.coordinator,
+        pendingSurfaceActions: new Map([
+          ["surface-1", { surfaceType: "form" }],
+        ]) as Conversation["pendingSurfaceActions"],
+      });
+
+      await runAgentLoopImpl(ctx, "hello", "msg-1", () => {});
+
+      expect(sessions.recordStructuralWait).toHaveBeenCalledWith("test-req", {
+        kind: "surface",
+        responseId: "surface-1",
+      });
+      expect(sessions.releaseTurn).toHaveBeenCalledWith("test-req");
+      expect(sessions.beginDraining).not.toHaveBeenCalled();
+      expect(sessions.finalizeTurn).not.toHaveBeenCalled();
+    });
+
+    test("transfers ownership to the queued turn at a checkpoint", async () => {
+      const sessions = makeModeSessionDouble();
+      const ctx = makeCtx({
+        modeSessions: sessions.coordinator,
+        providerResponses: [toolUseResponse("tu-1", "file_read", {})],
+        loopTools: [
+          {
+            name: "file_read",
+            description: "Read a file",
+            input_schema: { type: "object", properties: {} },
+          },
+        ],
+        toolExecutor: async () => ({ content: "file content", isError: false }),
+        canHandoffAtCheckpoint: () => true,
+        queue: {
+          snapshot: () => [{ requestId: "msg-2" }],
+        } as unknown as Conversation["queue"],
+      });
+
+      await runAgentLoopImpl(ctx, "hello", "msg-1", () => {});
+
+      expect(sessions.transferTurn).toHaveBeenCalledWith("test-req", "msg-2");
+      expect(sessions.finalizeTurn).not.toHaveBeenCalled();
+    });
+  });
+
   describe("user-prompt-submit hook failures", () => {
     test("passes the effective profile to hooks even when it was already announced", async () => {
       // Both profiles are complete (provider + model) so each is a usable
@@ -2298,11 +2487,23 @@ describe("session-agent-loop", () => {
         },
       };
 
-      const ctx = makeCtx({ loopProvider: provider, abortController });
+      const sessions = makeModeSessionDouble();
+      const ctx = makeCtx({
+        loopProvider: provider,
+        abortController,
+        modeSessions: sessions.coordinator,
+      });
       await runAgentLoopImpl(ctx, "hello", "msg-1", (msg) => events.push(msg));
 
       const cancelled = events.find((e) => e.type === "generation_cancelled");
       expect(cancelled).toBeDefined();
+      expect(sessions.finalizeTurn).toHaveBeenCalledWith({
+        turnId: "test-req",
+        status: "interrupted",
+        endedAt: expect.any(Number),
+        endReason: "cancelled",
+        lastActivityAt: expect.any(Number),
+      });
     });
 
     // A `task_progress` card mid-run. `data` mirrors what `ui_show` stores for
@@ -3117,9 +3318,18 @@ describe("session-agent-loop", () => {
       // shape too, so a reload explains why the assistant stopped instead of
       // ending on a bare tool call.
       reserveMessageMock
-        .mockImplementationOnce(async () => ({ id: "msg-reserve-1" }))
-        .mockImplementationOnce(async () => ({ id: "msg-reserve-2" }))
-        .mockImplementationOnce(async () => ({ id: "msg-reserve-3" }));
+        .mockImplementationOnce(async () => ({
+          id: "msg-reserve-1",
+          createdAt: 1_700_000_000_051,
+        }))
+        .mockImplementationOnce(async () => ({
+          id: "msg-reserve-2",
+          createdAt: 1_700_000_000_052,
+        }))
+        .mockImplementationOnce(async () => ({
+          id: "msg-reserve-3",
+          createdAt: 1_700_000_000_053,
+        }));
       mockConversationErrorClassification = DAILY_LIMIT_CLASSIFICATION;
 
       // GIVEN a run whose first call asks for a tool, the tool succeeds, and
@@ -3631,8 +3841,14 @@ describe("session-agent-loop", () => {
       // `llm_call_started` must delete the stranded row so the transcript
       // does not accumulate empty assistant bubbles.
       reserveMessageMock
-        .mockImplementationOnce(async () => ({ id: "msg-strand-A" }))
-        .mockImplementationOnce(async () => ({ id: "msg-strand-B" }));
+        .mockImplementationOnce(async () => ({
+          id: "msg-strand-A",
+          createdAt: 1_700_000_000_051,
+        }))
+        .mockImplementationOnce(async () => ({
+          id: "msg-strand-B",
+          createdAt: 1_700_000_000_052,
+        }));
       // Indexer/projector mocks default to no-op; no finalized row in this
       // test, so `mockMessageById` stays null.
 
@@ -3694,6 +3910,7 @@ describe("session-agent-loop", () => {
       // reservation id.
       reserveMessageMock.mockImplementationOnce(async () => ({
         id: "msg-orphaned-reservation",
+        createdAt: 1_700_000_000_051,
       }));
 
       // GIVEN a real loop that reserves an assistant row at
@@ -3736,6 +3953,7 @@ describe("session-agent-loop", () => {
     test("managed-key provider-error cleanup publishes message invalidation after deleting the reservation", async () => {
       reserveMessageMock.mockImplementationOnce(async () => ({
         id: "msg-managed-key-reservation",
+        createdAt: 1_700_000_000_051,
       }));
       mockConversationErrorClassification = {
         code: "MANAGED_KEY_INVALID",
@@ -4072,6 +4290,7 @@ describe("session-agent-loop", () => {
       // error message lands.
       reserveMessageMock.mockImplementationOnce(async () => ({
         id: "msg-orphan-with-partial",
+        createdAt: 1_700_000_000_051,
       }));
 
       // GIVEN a real loop whose provider streams a delta — landing a debounced

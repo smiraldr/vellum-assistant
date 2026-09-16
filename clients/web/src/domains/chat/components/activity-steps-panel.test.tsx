@@ -406,6 +406,32 @@ describe("ActivityStepsPanel — level 2 drill-in", () => {
 });
 
 describe("ActivityStepsPanel - computer screenshot gallery", () => {
+  test("keeps action wording inside Working without displacing its screenshot", () => {
+    const screenshot = computerUseCall("tc-shot", {
+      imageDataList: ["AAAA"],
+      activity: null,
+    });
+    const click = makeToolCall({
+      id: "tc-click",
+      name: "host_bash",
+      input: { command: "assistant browser click #submit" },
+      startedAt: 2_000,
+      completedAt: 3_000,
+    });
+    const { getAllByTestId, getByText, getByRole } = renderScreenshotPanel([
+      screenshot,
+      click,
+    ]);
+
+    expect(getAllByTestId("phase-header")).toHaveLength(1);
+    expect(getByText("Clicking")).toBeTruthy();
+    expect(getAllByTestId("activity-screenshot-tile")).toHaveLength(1);
+    const tile = getByRole("button", {
+      name: "Preview computer screenshot",
+    });
+    expect(tile.querySelector("img")?.getAttribute("src")).toContain("AAAA");
+  });
+
   test("uses rendered tool order and keeps shared attachment ids as two occurrences", () => {
     const first = computerUseCall("tc-first", {
       imageAttachmentIds: ["att-shared"],

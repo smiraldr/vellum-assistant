@@ -37,6 +37,7 @@ import { Fragment, type ReactNode } from "react";
 import { Tooltip, Typography } from "@vellumai/design-library";
 
 import type { IconName } from "@/domains/chat/components/tool-progress-card/derive-step-label";
+import { ACTION_DISPLAY_TRANSLATION_KEYS } from "@/domains/chat/components/tool-progress-card/action-display-label";
 import { ThreeDotIndicator } from "@/domains/chat/components/tool-progress-card/three-dot-indicator";
 import { thinkingPreview } from "@/domains/chat/utils/thinking-preview";
 import {
@@ -642,7 +643,7 @@ export function stepRendersPill(step: ToolCallCardStep): boolean {
     case "thinking":
       return true;
     case "tool":
-      return step.info.length > 0;
+      return Boolean(step.activity || step.actionDisplayKey || step.info);
     case "tool_error":
     case "web_search_error":
     case "web_search":
@@ -661,6 +662,7 @@ export function stepRendersPill(step: ToolCallCardStep): boolean {
  * override.
  */
 export function DefaultStepPill({ step }: { step: ToolCallCardStep }) {
+  const { t } = useTranslation("chat");
   if (step.kind === "thinking") {
     return (
       <StepPill>
@@ -684,7 +686,12 @@ export function DefaultStepPill({ step }: { step: ToolCallCardStep }) {
           aria-hidden="true"
           className="h-3.5 w-3.5 shrink-0 text-[var(--content-secondary)]"
         />
-        <PillText>{step.info}</PillText>
+        <PillText>
+          {step.activity ||
+            (step.actionDisplayKey
+              ? t(ACTION_DISPLAY_TRANSLATION_KEYS[step.actionDisplayKey])
+              : step.info)}
+        </PillText>
       </StepPill>
     );
   }

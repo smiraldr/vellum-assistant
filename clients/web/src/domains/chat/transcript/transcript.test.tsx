@@ -10,17 +10,19 @@
  * LatestTurnRow follows at the end of the DOM (visual bottom).
  */
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
-import { act, useEffect } from "react";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
+import { act, createRef, useEffect } from "react";
 import { cleanup, fireEvent, render } from "@testing-library/react";
 
 // `ChatMarkdownMessage` pulls in `react-markdown` + `remark-gfm`. They render
 // fine under `renderToStaticMarkup`, but to keep these tests hermetic we
 // replace it with a plain passthrough.
+let markdownRenderCount = 0;
 mock.module("@/domains/chat/components/chat-markdown-message", () => ({
-  ChatMarkdownMessage: ({ content }: { content: string }) => (
-    <div data-testid="markdown">{content}</div>
-  ),
+  ChatMarkdownMessage: ({ content }: { content: string }) => {
+    markdownRenderCount += 1;
+    return <div data-testid="markdown">{content}</div>;
+  },
 }));
 
 // `SurfaceRouter` fans out to many per-surface renderers; stub with a
@@ -75,6 +77,8 @@ import { Transcript } from "@/domains/chat/transcript/transcript";
 import { resetResponseArtifactAwards } from "@/domains/chat/transcript/resolve-response-artifacts";
 import { INITIAL_TURN_STATE, useTurnStore } from "@/domains/chat/turn-store";
 import { viewportAxesStub } from "@/hooks/viewport-axes.test-helper";
+import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
+import type { SessionDisclosureState } from "@/domains/chat/transcript/use-session-disclosure-state";
 
 import { textBody } from "@/domains/chat/utils/message-test-helpers";
 function userMessage(id: string, content: string): TranscriptItem {
@@ -96,8 +100,313 @@ function assistantMessage(id: string, content: string): TranscriptItem {
 }
 
 const noop = () => {};
+const openDisclosure: SessionDisclosureState = {
+  isSessionOpen: () => true,
+  observeLiveSession: noop,
+  setSessionOpen: noop,
+};
+
+function activeDescriptor(
+  id: string,
+  messageId = "a-session",
+): ModeSessionDescriptor {
+  return {
+    summary: {
+      id,
+      conversationId: "conv-1",
+      mode: "browser",
+      sourceStartedAt: 1_000,
+      firstIncludedAt: 1_000,
+      firstIncludedMessageId: messageId,
+      lastActivityAt: 2_000,
+      lastOwnedMessageId: messageId,
+      revision: 1,
+      status: "active",
+      endedAt: null,
+      endReason: null,
+    },
+  };
+}
+
+function completedDescriptor(id: string): ModeSessionDescriptor {
+  const active = activeDescriptor(id).summary;
+  return {
+    summary: {
+      ...active,
+      status: "completed",
+      endedAt: 3_000,
+      endReason: "completed",
+    },
+  };
+}
+
+afterEach(() => {
+  cleanup();
+  markdownRenderCount = 0;
+});
 
 describe("Transcript", () => {
+  test("keeps the latest reply DOM mounted while its session header appears", () => {
+    const anchor = userMessage("u-session", "Open the page");
+    const response = assistantMessage("a-session", "Session reply");
+    const { getByText, queryByRole, rerender } = render(
+      <Transcript
+        items={[anchor, response]}
+        conversationId="conv-1"
+        sessionGroupsEnabled
+        sessionDisclosureState={openDisclosure}
+        onSurfaceAction={noop}
+      />,
+    );
+    const replyNode = getByText("Session reply").closest("[data-message-id]");
+    expect(queryByRole("button", { name: /Browser session/ })).toBeNull();
+
+    if (response.kind !== "message") {
+      throw new Error("Expected message fixture");
+    }
+    const stampedResponse: TranscriptItem = {
+      ...response,
+      message: {
+        ...response.message,
+        timestamp: 2_000,
+        modeSession: { mode: "browser", id: "session-1" },
+      },
+    };
+    rerender(
+      <Transcript
+        items={[anchor, stampedResponse]}
+        conversationId="conv-1"
+        modeSessionDescriptors={[activeDescriptor("session-1")]}
+        sessionGroupsEnabled
+        sessionDisclosureState={openDisclosure}
+        onSurfaceAction={noop}
+      />,
+    );
+
+    expect(getByText("Session reply").closest("[data-message-id]")).toBe(
+      replyNode,
+    );
+    expect(queryByRole("button", { name: /Browser session/ })).toBeTruthy();
+  });
+
+  test("opens a closed recorded group before a deep-link retry scrolls", () => {
+    const ref = createRef<import("./transcript").TranscriptHandle>();
+    const stamped = assistantMessage("a-session", "Recorded reply");
+    if (stamped.kind !== "message") {
+      throw new Error("Expected message fixture");
+    }
+    stamped.message.timestamp = 2_000;
+    stamped.message.modeSession = { mode: "browser", id: "session-1" };
+    const { queryByText } = render(
+      <Transcript
+        ref={ref}
+        items={[stamped]}
+        conversationId="conv-1"
+        modeSessionDescriptors={[completedDescriptor("session-1")]}
+        sessionGroupsEnabled
+        onSurfaceAction={noop}
+      />,
+    );
+
+    expect(queryByText("Recorded reply")).toBeNull();
+    let found = true;
+    act(() => {
+      found = ref.current?.scrollToMessage("a-session") ?? true;
+    });
+    expect(found).toBe(false);
+    expect(queryByText("Recorded reply")).toBeTruthy();
+  });
+
+  test("resolves an optimistic nonce when revealing and retrying a collapsed target", () => {
+    const ref = createRef<import("./transcript").TranscriptHandle>();
+    const stamped = assistantMessage("server-1", "Optimistic reply");
+    if (stamped.kind !== "message") {
+      throw new Error("Expected message fixture");
+    }
+    stamped.message.clientMessageId = "nonce-1";
+    stamped.message.timestamp = 2_000;
+    stamped.message.modeSession = { mode: "browser", id: "session-1" };
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = mock(() => {});
+    try {
+      const { queryByText } = render(
+        <Transcript
+          ref={ref}
+          items={[stamped]}
+          conversationId="conv-1"
+          modeSessionDescriptors={[
+            {
+              summary: {
+                ...completedDescriptor("session-1").summary,
+                firstIncludedMessageId: "server-1",
+                lastOwnedMessageId: "server-1",
+              },
+            },
+          ]}
+          sessionGroupsEnabled
+          onSurfaceAction={noop}
+        />,
+      );
+
+      let found = true;
+      act(() => {
+        found = ref.current?.scrollToMessage("nonce-1") ?? true;
+      });
+      expect(found).toBe(false);
+      expect(queryByText("Optimistic reply")).toBeTruthy();
+
+      act(() => {
+        found = ref.current?.scrollToMessage("nonce-1") ?? false;
+      });
+      expect(found).toBe(true);
+    } finally {
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
+    }
+  });
+
+  test("commits a default-closed alias reveal before running anchor correction", () => {
+    const ref = createRef<import("./transcript").TranscriptHandle>();
+    const stamped = assistantMessage("server-1", "Preserved anchor reply");
+    if (stamped.kind !== "message") {
+      throw new Error("Expected message fixture");
+    }
+    stamped.message.mergedMessageIds = ["saved-alias"];
+    stamped.message.timestamp = 2_000;
+    stamped.message.modeSession = { mode: "browser", id: "session-1" };
+    const revealed = mock(() => {});
+    const { queryByText } = render(
+      <Transcript
+        ref={ref}
+        items={[stamped]}
+        conversationId="conv-1"
+        modeSessionDescriptors={[
+          {
+            summary: {
+              ...completedDescriptor("session-1").summary,
+              firstIncludedMessageId: "saved-alias",
+              lastOwnedMessageId: "saved-alias",
+            },
+          },
+        ]}
+        sessionGroupsEnabled
+        onSurfaceAction={noop}
+      />,
+    );
+
+    expect(queryByText("Preserved anchor reply")).toBeNull();
+    let requested = false;
+    act(() => {
+      requested =
+        ref.current?.revealMessage?.("saved-alias", revealed) ?? false;
+    });
+    expect(requested).toBe(true);
+    expect(queryByText("Preserved anchor reply")).toBeTruthy();
+    expect(revealed).toHaveBeenCalledTimes(1);
+  });
+
+  test("subscribes only intersecting active session headers to the clock", () => {
+    const callbacks: IntersectionObserverCallback[] = [];
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    globalThis.IntersectionObserver = class implements IntersectionObserver {
+      root = null;
+      rootMargin = "0px";
+      thresholds = [0];
+      constructor(callback: IntersectionObserverCallback) {
+        callbacks.push(callback);
+      }
+      disconnect() {}
+      observe() {}
+      takeRecords() {
+        return [];
+      }
+      unobserve() {}
+    };
+    let tick: (() => void) | undefined;
+    const interval = spyOn(globalThis, "setInterval").mockImplementation(((
+      callback: TimerHandler,
+    ) => {
+      tick = callback as () => void;
+      return 1 as unknown as ReturnType<typeof setInterval>;
+    }) as unknown as typeof setInterval);
+    const clear = spyOn(globalThis, "clearInterval").mockImplementation(
+      () => {},
+    );
+    let now = 4_000;
+    const dateNow = spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const first = assistantMessage("a-one", "First active reply");
+      const second = assistantMessage("a-two", "Second active reply");
+      for (const [item, sessionId] of [
+        [first, "session-1"],
+        [second, "session-2"],
+      ] as const) {
+        if (item.kind === "message") {
+          item.message.timestamp = 2_000;
+          item.message.modeSession = { mode: "browser", id: sessionId };
+        }
+      }
+      render(
+        <Transcript
+          items={[first, second]}
+          conversationId="conv-1"
+          modeSessionDescriptors={[
+            activeDescriptor("session-1", "a-one"),
+            activeDescriptor("session-2", "a-two"),
+          ]}
+          sessionGroupsEnabled
+          sessionDisclosureState={openDisclosure}
+          onSurfaceAction={noop}
+        />,
+      );
+      expect(callbacks).toHaveLength(2);
+      const bodyRenders = markdownRenderCount;
+
+      act(() => {
+        callbacks[0]?.(
+          [{ isIntersecting: true } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      expect(interval).toHaveBeenCalledTimes(1);
+      now += 1_000;
+      act(() => tick?.());
+      expect(markdownRenderCount).toBe(bodyRenders);
+
+      act(() => {
+        callbacks[0]?.(
+          [{ isIntersecting: false } as IntersectionObserverEntry],
+          {} as IntersectionObserver,
+        );
+      });
+      expect(clear).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.IntersectionObserver = originalIntersectionObserver;
+      interval.mockRestore();
+      clear.mockRestore();
+      dateNow.mockRestore();
+    }
+  });
+
+  test("keeps the ordinary flat transcript when the presentation flag is off", () => {
+    const stamped = assistantMessage("a-session", "Flat reply");
+    if (stamped.kind !== "message") {
+      throw new Error("Expected message fixture");
+    }
+    stamped.message.modeSession = { mode: "browser", id: "session-1" };
+    const { getByText, queryByRole } = render(
+      <Transcript
+        items={[stamped]}
+        conversationId="conv-1"
+        modeSessionDescriptors={[completedDescriptor("session-1")]}
+        sessionGroupsEnabled={false}
+        onSurfaceAction={noop}
+      />,
+    );
+
+    expect(getByText("Flat reply")).toBeTruthy();
+    expect(queryByRole("button", { name: /Browser session/ })).toBeNull();
+  });
+
   test("with empty items, renders zero rows", () => {
     const html = renderToStaticMarkup(
       <Transcript items={[]} conversationId={null} onSurfaceAction={noop} />,

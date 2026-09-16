@@ -9,6 +9,7 @@ import {
   finalizeConversationModeSession,
   getConversationModeSession,
   listConversationModeSessionsByIds,
+  repairConversationModeSessionBoundaries,
   updateConversationModeSessionActivity,
   updateConversationModeSessionBoundaries,
 } from "./conversation-mode-sessions.js";
@@ -20,6 +21,13 @@ function createStore() {
   sqlite.exec(/* sql */ `
     PRAGMA foreign_keys = ON;
     CREATE TABLE conversations (id TEXT PRIMARY KEY);
+    CREATE TABLE messages (
+      id TEXT PRIMARY KEY,
+      conversation_id TEXT NOT NULL,
+      role TEXT NOT NULL DEFAULT 'assistant',
+      created_at INTEGER NOT NULL,
+      metadata TEXT
+    );
     INSERT INTO conversations (id) VALUES ('conv-123'), ('conv-456');
   `);
   const db = drizzle(sqlite, { schema });
@@ -271,5 +279,66 @@ describe("conversation mode session store", () => {
     expect(getConversationModeSession("conv-123", "session-456", options)).toBe(
       null,
     );
+  });
+
+  test("repairs replaceable boundaries without reopening a terminal session", () => {
+    const { sqlite, options } = createStore();
+    beginConversationModeSession(
+      {
+        id: "session-123",
+        conversationId: "conv-123",
+        mode: "browser",
+        sourceStartedAt: 100,
+      },
+      options,
+    );
+    updateConversationModeSessionBoundaries(
+      {
+        id: "session-123",
+        conversationId: "conv-123",
+        expectedRevision: 1,
+        firstIncluded: { at: 90, messageId: "message-deleted" },
+        lastOwnedMessageId: "message-last",
+      },
+      options,
+    );
+    finalizeConversationModeSession(
+      {
+        id: "session-123",
+        conversationId: "conv-123",
+        expectedRevision: 2,
+        status: "completed",
+        endedAt: 150,
+        endReason: "settled",
+      },
+      options,
+    );
+    sqlite.exec(/* sql */ `
+      INSERT INTO messages (id, conversation_id, created_at, metadata)
+      VALUES
+        ('message-leading', 'conv-123', 110, '{"modeSession":{"mode":"browser","id":"session-123"}}'),
+        ('message-middle', 'conv-123', 120, '{"modeSession":{"mode":"browser","id":"session-123"},"sentAt":115}'),
+        ('message-last', 'conv-123', 130, '{"modeSession":{"mode":"browser","id":"session-123"}}'),
+        ('message-other', 'conv-456', 90, '{"modeSession":{"mode":"browser","id":"session-123"}}');
+    `);
+    sqlite.exec(
+      "UPDATE messages SET role = 'user' WHERE id = 'message-leading'",
+    );
+
+    expect(repairConversationModeSessionBoundaries("conv-123", options)).toBe(
+      1,
+    );
+    expect(
+      getConversationModeSession("conv-123", "session-123", options),
+    ).toMatchObject({
+      status: "completed",
+      endedAt: 150,
+      endReason: "settled",
+      revision: 4,
+      firstIncludedAt: 115,
+      firstIncludedMessageId: "message-middle",
+      lastOwnedMessageId: "message-last",
+      lastActivityAt: 130,
+    });
   });
 });

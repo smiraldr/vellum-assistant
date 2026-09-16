@@ -1,9 +1,12 @@
 import { describe, expect, test } from "bun:test";
 
 import {
+  activeModeSessionIdsForRefresh,
   aggregateBackgroundToolCompletions,
+  aggregateModeSessionDescriptors,
   aggregateSubagentNotifications,
 } from "@/domains/chat/transcript/use-history-pagination";
+import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
 import type { RuntimeSubagentNotification } from "@/domains/chat/api/messages";
 import type { BackgroundTaskEntry } from "@/domains/chat/background-task-store";
 import type { PaginatedHistoryResult } from "@/domains/chat/transcript/types";
@@ -33,15 +36,46 @@ function completion(id: string): BackgroundTaskEntry {
 function page(
   subagentNotifications?: RuntimeSubagentNotification[],
   backgroundToolCompletions?: BackgroundTaskEntry[],
+  modeSessions?: ModeSessionDescriptor[],
+  messages: PaginatedHistoryResult["messages"] = [],
 ): PaginatedHistoryResult {
   return {
-    messages: [],
+    messages,
     hasMore: false,
     oldestTimestamp: null,
     oldestMessageId: null,
     ...(subagentNotifications ? { subagentNotifications } : {}),
     ...(backgroundToolCompletions ? { backgroundToolCompletions } : {}),
+    ...(modeSessions ? { modeSessions } : {}),
   };
+}
+
+function descriptor(
+  id: string,
+  revision: number,
+  status: "active" | "completed" = "active",
+): ModeSessionDescriptor {
+  const base = {
+    id,
+    conversationId: "conv-1",
+    mode: "computer_use" as const,
+    sourceStartedAt: 1,
+    firstIncludedAt: 1,
+    firstIncludedMessageId: "message-1",
+    lastActivityAt: 2,
+    lastOwnedMessageId: "message-1",
+    revision,
+  };
+  return status === "active"
+    ? { summary: { ...base, status, endedAt: null, endReason: null } }
+    : {
+        summary: {
+          ...base,
+          status,
+          endedAt: 2,
+          endReason: "completed",
+        },
+      };
 }
 
 describe("aggregateSubagentNotifications", () => {
@@ -108,5 +142,86 @@ describe("aggregateBackgroundToolCompletions", () => {
       "bg-late",
       "bg-latest",
     ]);
+  });
+});
+
+describe("mode session descriptor aggregation", () => {
+  test("keeps the newest revision while preserving independent page content", () => {
+    const result = aggregateModeSessionDescriptors([
+      page(undefined, undefined, [descriptor("session-a", 2)]),
+      page(undefined, undefined, [
+        descriptor("session-a", 1),
+        descriptor("session-b", 1, "completed"),
+      ]),
+    ]);
+    expect(result.map(({ summary }) => [summary.id, summary.revision])).toEqual(
+      [
+        ["session-a", 2],
+        ["session-b", 1],
+      ],
+    );
+  });
+
+  test("keeps a previously accepted newer descriptor across a stale response", () => {
+    const accepted = descriptor("session-a", 2);
+    const previous = [accepted];
+    const result = aggregateModeSessionDescriptors(
+      [page(undefined, undefined, [descriptor("session-a", 1)])],
+      previous,
+    );
+
+    expect(result).toBe(previous);
+    expect(result[0]).toBe(accepted);
+  });
+
+  test("reuses equal revisions while accepting independent descriptors", () => {
+    const accepted = descriptor("session-a", 2);
+    const next = aggregateModeSessionDescriptors(
+      [
+        page(undefined, undefined, [
+          descriptor("session-a", 2),
+          descriptor("session-b", 1),
+        ]),
+      ],
+      [accepted],
+    );
+
+    expect(next[0]).toBe(accepted);
+    expect(next[1]?.summary.id).toBe("session-b");
+  });
+
+  test("retains needed prior descriptors and drops absent settled records", () => {
+    const active = descriptor("session-active", 2);
+    const represented = descriptor("session-represented", 2, "completed");
+    const absent = descriptor("session-absent", 2, "completed");
+    const result = aggregateModeSessionDescriptors(
+      [
+        page(undefined, undefined, undefined, [
+          {
+            id: "message-1",
+            role: "assistant",
+            modeSession: {
+              mode: "computer_use",
+              id: "session-represented",
+            },
+          },
+        ]),
+      ],
+      [active, represented, absent],
+    );
+
+    expect(result).toEqual([active, represented]);
+  });
+
+  test("refreshes only bounded active ids from all loaded pages", () => {
+    expect(
+      activeModeSessionIdsForRefresh([
+        page(undefined, undefined, [descriptor("session-new", 1)]),
+        page(undefined, undefined, [
+          descriptor("session-old", 1),
+          descriptor("session-done", 1, "completed"),
+        ]),
+      ]),
+    ).toEqual(["session-new", "session-old"]);
   });
 });

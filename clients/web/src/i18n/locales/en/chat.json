@@ -98,6 +98,17 @@
   "assistantContentDisclosure": {
     "earlierActivity": "Earlier activity"
   },
+  "actionDisplay": {
+    "click": "Clicking",
+    "type": "Typing",
+    "keyPress": "Pressing a key",
+    "scroll": "Scrolling",
+    "drag": "Dragging",
+    "hover": "Hovering",
+    "observe": "Observing",
+    "navigate": "Navigating",
+    "terminal": "Running a command"
+  },
   "sessionGroupRow": {
     "mode": {
       "computerUse": "Computer use session",
@@ -121,6 +132,9 @@
     "interruptedWithDurationAndLastActivity": "Interrupted · {duration} · Last active {lastActivityTime}",
     "interruptedWithLastActivity": "Interrupted · Last active {lastActivityTime}",
     "interruptedWithEnd": "Interrupted · Ended {endTime}",
+    "disconnected": "Connection lost",
+    "disconnectedWithDurationAndLastActivity": "Connection lost · {duration} · Last active {lastActivityTime}",
+    "disconnectedWithLastActivity": "Connection lost · Last active {lastActivityTime}",
     "timingUnavailable": "Timing unavailable"
   },
   "assistantDesktop": {

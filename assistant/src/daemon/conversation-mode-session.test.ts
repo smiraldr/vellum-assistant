@@ -157,6 +157,26 @@ function registerSource(
 }
 
 describe("ConversationModeSessionCoordinator", () => {
+  test("does not retain unowned or terminal bookkeeping", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+
+    expect(coordinator.hasResidentWork()).toBe(false);
+    coordinator.acceptTurn("turn-unowned");
+    expect(coordinator.hasResidentWork()).toBe(false);
+    coordinator.describeSummary(
+      activeSession({
+        status: "completed",
+        endedAt: 120,
+        endReason: "settled",
+      }),
+    );
+    expect(coordinator.hasResidentWork()).toBe(false);
+  });
+
   test("activates a durable source once per generation", () => {
     const store = createDependencies();
     const coordinator = new ConversationModeSessionCoordinator(
@@ -203,6 +223,46 @@ describe("ConversationModeSessionCoordinator", () => {
     });
   });
 
+  test("mints a new run after a successful turn without resetting the source", () => {
+    const store = createDependencies();
+    const ids = ["session-first", "session-second"];
+    store.dependencies.createId = () => ids.shift()!;
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const first = coordinator.activateSource({
+      sourceId: "browser-source",
+      generation: 1,
+      mode: "browser",
+      sourceStartedAt: 100,
+    });
+    expect(first?.id).toBe("session-first");
+    coordinator.claimTurn("turn-first", first!, 110);
+    coordinator.trackPersistedRow("turn-first", "assistant-first", 120);
+    expect(
+      coordinator.finalizeTurn({
+        turnId: "turn-first",
+        status: "completed",
+        endedAt: 130,
+        endReason: "turn_settled",
+      }),
+    ).toBe(true);
+
+    expect(
+      coordinator.activateSource({
+        sourceId: "browser-source",
+        generation: 1,
+        mode: "browser",
+        sourceStartedAt: 140,
+      }),
+    ).toMatchObject({
+      id: "session-second",
+      generation: 1,
+      activation: 2,
+    });
+  });
+
   test("claims once and backfills only successfully tracked rows", () => {
     const store = createDependencies();
     const coordinator = new ConversationModeSessionCoordinator(
@@ -244,6 +304,52 @@ describe("ConversationModeSessionCoordinator", () => {
     expect(coordinator.getTurnOwner("turn-123")?.id).toBe("session-123");
   });
 
+  test("starts non-Live display timing at the first assistant row", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+
+    coordinator.trackPersistedRow("turn-123", "user-123", 80, {
+      startsDisplayBoundary: false,
+    });
+    coordinator.trackPersistedRow("turn-123", "assistant-123", 90);
+    coordinator.claimTurn("turn-123", handle, 120);
+
+    expect(store.stamps).toEqual([
+      { messageId: "user-123", sessionId: "session-123" },
+      { messageId: "assistant-123", sessionId: "session-123" },
+    ]);
+    expect(store.session()).toMatchObject({
+      firstIncludedAt: 90,
+      firstIncludedMessageId: "assistant-123",
+      lastOwnedMessageId: "assistant-123",
+    });
+  });
+
+  test("allows Live display timing to include its leading row", () => {
+    const liveSession = activeSession({ mode: "live_vision" });
+    const store = createDependencies(liveSession);
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, liveSession, "camera-source");
+
+    coordinator.trackPersistedRow("turn-123", "camera-123", 80, {
+      startsDisplayBoundary: false,
+    });
+    coordinator.claimTurn("turn-123", handle, 120);
+
+    expect(store.session()).toMatchObject({
+      firstIncludedAt: 80,
+      firstIncludedMessageId: "camera-123",
+      lastOwnedMessageId: "camera-123",
+    });
+  });
+
   test("inherits only an exact unconsumed structural response", () => {
     const store = createDependencies();
     const coordinator = new ConversationModeSessionCoordinator(
@@ -251,6 +357,7 @@ describe("ConversationModeSessionCoordinator", () => {
       store.dependencies,
     );
     const handle = registerSource(coordinator, store.session());
+    expect(coordinator.hasResidentWork()).toBe(true);
     coordinator.acceptTurn("turn-origin");
     coordinator.claimTurn("turn-origin", handle, 110);
     expect(
@@ -262,6 +369,8 @@ describe("ConversationModeSessionCoordinator", () => {
     expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
       "waiting",
     );
+    coordinator.releaseTurn("turn-origin");
+    expect(coordinator.hasResidentWork()).toBe(true);
 
     expect(
       coordinator.acceptTurn("turn-wrong-kind", {
@@ -301,6 +410,32 @@ describe("ConversationModeSessionCoordinator", () => {
         responseId: "interaction-123",
       }),
     ).toBeUndefined();
+  });
+
+  test("invalidates structural continuation when transcript history changes", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-origin", handle, 110);
+    coordinator.recordStructuralWait("turn-origin", {
+      kind: "surface",
+      responseId: "surface-123",
+    });
+
+    expect(coordinator.invalidateAllStructuralWaits()).toBe(1);
+    expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
+      undefined,
+    );
+    expect(
+      coordinator.acceptTurn("turn-resumed", {
+        kind: "surface",
+        responseId: "surface-123",
+      }),
+    ).toBeUndefined();
+    expect(coordinator.invalidateAllStructuralWaits()).toBe(0);
   });
 
   test("does not inherit recovered terminal state", () => {
@@ -397,6 +532,7 @@ describe("ConversationModeSessionCoordinator", () => {
         lastActivityAt: 130,
       }),
     ).toBe(true);
+    expect(coordinator.hasResidentWork()).toBe(false);
     expect(coordinator.getTurnOwner("turn-123")).toBeUndefined();
     expect(coordinator.descriptorFor("session-123")).toEqual({
       summary: expect.objectContaining({
@@ -449,6 +585,75 @@ describe("ConversationModeSessionCoordinator", () => {
     expect(store.session()).toMatchObject({
       firstIncludedMessageId: "assistant-123",
       lastOwnedMessageId: "tool-result-123",
+    });
+  });
+
+  test("waits for every source-lifetime turn before terminal persistence", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = coordinator.activateSource({
+      sourceId: "camera-source",
+      generation: 1,
+      mode: "live_vision",
+      sourceStartedAt: 100,
+      lifetime: "source",
+    });
+    expect(handle).toBeDefined();
+    coordinator.acceptTurn("camera-run");
+    coordinator.claimTurn("camera-run", handle!, 100);
+    coordinator.acceptTurn("voice-turn");
+    coordinator.claimTurn("voice-turn", handle!, 110);
+    coordinator.trackPersistedRow("voice-turn", "assistant-123", 120);
+    expect(coordinator.keepsSessionOpenAfterTurn("voice-turn")).toBe(true);
+
+    expect(
+      coordinator.retireSource(handle!, {
+        status: "interrupted",
+        endReason: "camera_lost",
+      }),
+    ).toBe(true);
+    expect(coordinator.getTerminalDisposition("voice-turn")).toEqual({
+      status: "interrupted",
+      endReason: "camera_lost",
+    });
+    coordinator.releaseTurn("voice-turn");
+    expect(store.session().status).toBe("active");
+
+    coordinator.releaseTurn("camera-run");
+    expect(store.session()).toMatchObject({
+      status: "interrupted",
+      endReason: "camera_lost",
+      lastOwnedMessageId: "assistant-123",
+    });
+  });
+
+  test("transfers a handoff owner without reopening source eligibility", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+    coordinator.acceptTurn("turn-123");
+    coordinator.claimTurn("turn-123", handle, 110);
+    coordinator.trackPersistedRow("turn-123", "assistant-123", 120);
+
+    expect(coordinator.transferTurn("turn-123", "turn-456")).toEqual({
+      id: "session-123",
+      mode: "computer_use",
+    });
+    expect(coordinator.getTurnOwner("turn-123")).toBeUndefined();
+    expect(coordinator.getTurnOwner("turn-456")).toEqual({
+      id: "session-123",
+      mode: "computer_use",
+    });
+    coordinator.trackPersistedRow("turn-456", "assistant-456", 130);
+    expect(store.session()).toMatchObject({
+      firstIncludedMessageId: "assistant-123",
+      lastOwnedMessageId: "assistant-456",
     });
   });
 });

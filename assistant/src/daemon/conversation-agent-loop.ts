@@ -135,6 +135,7 @@ import {
 } from "./conversation-runtime-assembly.js";
 import type { CurrentTurnSurface } from "./conversation-surfaces.js";
 import {
+  blockingPendingSurfaceIds,
   hasBlockingPendingSurface,
   markSurfaceCompleted,
   settleRunningTaskProgressSurfaces,
@@ -289,6 +290,72 @@ function turnEndedAwaitingUser(ctx: Conversation): boolean {
   return getPendingInteractionsByConversation(ctx.conversationId).some(
     (interaction) => USER_PROMPT_INTERACTION_KINDS.has(interaction.kind),
   );
+}
+
+function recordModeSessionStructuralWaits(
+  ctx: Conversation,
+  turnId: string,
+): boolean {
+  let recorded = false;
+  for (const interaction of getPendingInteractionsByConversation(
+    ctx.conversationId,
+  )) {
+    const kind =
+      interaction.kind === "acp_confirmation"
+        ? "confirmation"
+        : interaction.kind;
+    if (kind !== "confirmation" && kind !== "question" && kind !== "secret") {
+      continue;
+    }
+    recorded =
+      ctx.modeSessions.recordStructuralWait(turnId, {
+        kind,
+        responseId: interaction.requestId,
+      }) || recorded;
+  }
+  for (const surfaceId of blockingPendingSurfaceIds(ctx)) {
+    recorded =
+      ctx.modeSessions.recordStructuralWait(turnId, {
+        kind: "surface",
+        responseId: surfaceId,
+      }) || recorded;
+  }
+  return recorded;
+}
+
+function settleModeSessionTurn(
+  ctx: Conversation,
+  turnId: string,
+  fallback: { status: "completed" | "interrupted"; endReason: string },
+): void {
+  if (!ctx.modeSessions.getTurnOwner(turnId)) {
+    ctx.modeSessions.releaseTurn(turnId);
+    return;
+  }
+  if (
+    fallback.status === "completed" &&
+    recordModeSessionStructuralWaits(ctx, turnId)
+  ) {
+    ctx.modeSessions.releaseTurn(turnId);
+    return;
+  }
+  if (ctx.modeSessions.keepsSessionOpenAfterTurn(turnId)) {
+    ctx.modeSessions.releaseTurn(turnId);
+    return;
+  }
+  ctx.modeSessions.beginDraining(turnId);
+  const disposition = ctx.modeSessions.getTerminalDisposition(turnId);
+  if (disposition) {
+    ctx.modeSessions.releaseTurn(turnId);
+    return;
+  }
+  ctx.modeSessions.finalizeTurn({
+    turnId,
+    status: fallback.status,
+    endedAt: Date.now(),
+    endReason: fallback.endReason,
+    lastActivityAt: Date.now(),
+  });
 }
 
 // ── abort watchdog ───────────────────────────────────────────────────
@@ -979,6 +1046,7 @@ export async function runAgentLoopImpl(
       publishConversationMessagesChanged(ctx.conversationId);
     }
   };
+  let eventHandlerDeps: EventHandlerDeps | undefined;
 
   try {
     closeTurnFinalization = beginTurnFinalization(ctx.conversationId);
@@ -1411,6 +1479,7 @@ export async function runAgentLoopImpl(
       latencyTracker,
       errorAttribution: turnErrorAttribution,
     };
+    eventHandlerDeps = deps;
     const eventHandler = (event: AgentEvent): Promise<void> => {
       if (
         event.type === "agent_loop_exit" &&
@@ -1584,13 +1653,28 @@ export async function runAgentLoopImpl(
         userMessageInterface: capturedTurnInterfaceContext.userMessageInterface,
         assistantMessageInterface:
           capturedTurnInterfaceContext.assistantMessageInterface,
+        modeSession: ctx.modeSessions.getTurnOwner(reqId),
       };
-      await finalizePendingToolResultRow(
+      const toolResultRowId = await finalizePendingToolResultRow(
         state,
         ctx.conversationId,
         toolResultMetadata,
         rlog,
       );
+      if (toolResultRowId) {
+        const toolResultRow = getMessageById(
+          toolResultRowId,
+          ctx.conversationId,
+        );
+        if (toolResultRow) {
+          ctx.modeSessions.trackPersistedRow(
+            reqId,
+            toolResultRowId,
+            toolResultRow.createdAt,
+            { startsDisplayBoundary: false },
+          );
+        }
+      }
     }
 
     // Persist the budget_yield_unrecovered notice now that any pending
@@ -1611,6 +1695,7 @@ export async function runAgentLoopImpl(
         userMessageInterface: capturedTurnInterfaceContext.userMessageInterface,
         assistantMessageInterface:
           capturedTurnInterfaceContext.assistantMessageInterface,
+        modeSession: ctx.modeSessions.getTurnOwner(reqId),
       };
       let yieldNoticePersistedId: string | null = null;
       try {
@@ -1621,6 +1706,11 @@ export async function runAgentLoopImpl(
           { metadata: yieldNoticeMetadata },
         );
         yieldNoticePersistedId = yieldRow.id;
+        ctx.modeSessions.trackPersistedRow(
+          reqId,
+          yieldRow.id,
+          yieldRow.createdAt,
+        );
       } catch (err) {
         // Non-fatal — a DB hiccup must not escalate a budget-yield exit into
         // a turn-level throw. The live SSE event was already emitted, so the
@@ -1795,6 +1885,7 @@ export async function runAgentLoopImpl(
           messageKind: PROVIDER_ERROR_MESSAGE_KIND,
           providerErrorCode: state.providerErrorCode ?? undefined,
           providerErrorCategory: state.providerErrorCategory ?? undefined,
+          modeSession: ctx.modeSessions.getTurnOwner(reqId),
         };
         // The persisted row re-enters LLM history and is displayed as
         // assistant speech, so the managed-billing categories swap the
@@ -1821,6 +1912,11 @@ export async function runAgentLoopImpl(
         // (or a downstream handler) doesn't try to clean up an id that
         // already corresponds to a finalized row.
         state.lastAssistantMessageId = errorRow.id;
+        ctx.modeSessions.trackPersistedRow(
+          reqId,
+          errorRow.id,
+          errorRow.createdAt,
+        );
         state.assistantRowAwaitingFinalization = false;
         newMessages.push(errorAssistantMessage);
         // Pipe the just-assigned message id into any orphaned LLM request log
@@ -2018,6 +2114,7 @@ export async function runAgentLoopImpl(
           ...(state.lastAssistantMessageId
             ? { messageId: state.lastAssistantMessageId }
             : {}),
+          modeSession: ctx.modeSessions.getTurnOwner(reqId),
         });
         publishLoopMessagesChanged();
       } else {
@@ -2030,6 +2127,7 @@ export async function runAgentLoopImpl(
         onEvent({
           type: "message_complete",
           conversationId: ctx.conversationId,
+          modeSession: ctx.modeSessions.getTurnOwner(reqId),
           ...(emittedAttachments.length > 0
             ? { attachments: emittedAttachments }
             : {}),
@@ -2064,6 +2162,28 @@ export async function runAgentLoopImpl(
     // has to complete under the processing lock.
     await settlePendingPartialFlush(state, deps);
     await settleTurnContent({ ctx, state, rlog });
+
+    if (yieldedForHandoff) {
+      const nextRequestId = ctx.queue.snapshot()[0]?.requestId;
+      if (nextRequestId) {
+        ctx.modeSessions.transferTurn(reqId, nextRequestId);
+      } else {
+        settleModeSessionTurn(ctx, reqId, {
+          status: "completed",
+          endReason: "handoff_settled",
+        });
+      }
+    } else if (abortController.signal.aborted) {
+      settleModeSessionTurn(ctx, reqId, {
+        status: "interrupted",
+        endReason: "cancelled",
+      });
+    } else {
+      settleModeSessionTurn(ctx, reqId, {
+        status: "completed",
+        endReason: "turn_settled",
+      });
+    }
 
     // Content is settled, so the conversation is free. Release before the
     // deferred tail rather than in the `finally`: the tail's memory indexing is
@@ -2142,6 +2262,21 @@ export async function runAgentLoopImpl(
       onEvent(buildConversationErrorMessage(ctx.conversationId, classified));
       publishLoopMessagesChanged();
     }
+    try {
+      if (eventHandlerDeps) {
+        await settlePendingPartialFlush(state, eventHandlerDeps);
+      }
+      await settleTurnContent({ ctx, state, rlog });
+    } catch (settleErr) {
+      rlog.warn(
+        { err: settleErr },
+        "Failed to settle interrupted turn content before mode-session finalization",
+      );
+    }
+    settleModeSessionTurn(ctx, reqId, {
+      status: "interrupted",
+      endReason: isUserCancellation(err, errorCtx) ? "cancelled" : "error",
+    });
   } finally {
     // Backstop release for the cancel/error paths, which throw out of the try
     // before the happy path's release runs. Idempotent, so the happy path

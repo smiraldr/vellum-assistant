@@ -16,6 +16,7 @@ import {
   test,
 } from "bun:test";
 
+import type { BrowserOperationToken } from "../../daemon/browser-mode-session.js";
 import { desktopDependencyInstaller } from "../../desktop/desktop-dependencies.js";
 import * as desktopFeature from "../../desktop/virtual-desktop-feature.js";
 import { browserManager } from "../../tools/browser/browser-manager.js";
@@ -46,7 +47,59 @@ let mockConversation: {
   clientOs?: string;
   getTurnActorPrincipalId?: () => string | undefined;
   abortController?: AbortController;
+  currentRequestId?: string;
+  browserModeSessions?: {
+    beginOperation: (input: {
+      turnId: string;
+      lifecycle: "action" | "terminal" | "status";
+      at: number;
+    }) => BrowserOperationToken | undefined;
+    finishOperation: (
+      token: BrowserOperationToken | undefined,
+      outcome: {
+        at: number;
+        isError: boolean;
+        cancelled: boolean;
+        terminalReason?: "browser_closed" | "browser_detached";
+      },
+    ) => boolean;
+  };
 } | null = null;
+
+const lifecycleBegins: Array<{
+  turnId: string;
+  lifecycle: "action" | "terminal" | "status";
+  at: number;
+}> = [];
+const lifecycleFinishes: Array<{
+  token: BrowserOperationToken | undefined;
+  outcome: {
+    at: number;
+    isError: boolean;
+    cancelled: boolean;
+    terminalReason?: "browser_closed" | "browser_detached";
+  };
+}> = [];
+
+function browserLifecycle() {
+  return {
+    beginOperation(input: (typeof lifecycleBegins)[number]) {
+      lifecycleBegins.push(input);
+      return {
+        turnId: input.turnId,
+        lifecycle: input.lifecycle === "status" ? "action" : input.lifecycle,
+        owner: { id: "browser-session", mode: "browser" as const },
+      } as BrowserOperationToken;
+    },
+    finishOperation(
+      token: BrowserOperationToken | undefined,
+      outcome: (typeof lifecycleFinishes)[number]["outcome"],
+    ) {
+      lifecycleFinishes.push({ token, outcome });
+      return true;
+    },
+  };
+}
 
 let mockFindConversationCalls: string[] = [];
 
@@ -156,6 +209,8 @@ afterEach(() => {
   mockOperationCalls = [];
   mockConversation = null;
   mockFindConversationCalls = [];
+  lifecycleBegins.length = 0;
+  lifecycleFinishes.length = 0;
 });
 
 // ---------------------------------------------------------------------------
@@ -469,6 +524,61 @@ describe("browser_execute route", () => {
       content: "Error: page not found",
       isError: true,
     });
+  });
+
+  test("brackets a typed live-turn action with browser lifecycle", async () => {
+    mockConversation = {
+      currentRequestId: "turn-123",
+      browserModeSessions: browserLifecycle(),
+      getTurnActorPrincipalId: () => undefined,
+    };
+
+    await callHandler({
+      operation: "navigate",
+      input: { url: "https://example.com" },
+      conversationId: "conv-live",
+    });
+
+    expect(lifecycleBegins).toEqual([
+      expect.objectContaining({ turnId: "turn-123", lifecycle: "action" }),
+    ]);
+    expect(lifecycleFinishes).toEqual([
+      expect.objectContaining({
+        token: expect.objectContaining({ turnId: "turn-123" }),
+        outcome: expect.objectContaining({
+          isError: false,
+          cancelled: false,
+        }),
+      }),
+    ]);
+  });
+
+  test("passes typed terminal success and failure outcomes", async () => {
+    mockConversation = {
+      currentRequestId: "turn-123",
+      browserModeSessions: browserLifecycle(),
+      getTurnActorPrincipalId: () => undefined,
+    };
+
+    await callHandler({ operation: "detach", conversationId: "conv-live" });
+    expect(lifecycleBegins[0]).toMatchObject({ lifecycle: "terminal" });
+    expect(lifecycleFinishes[0]?.outcome).toMatchObject({
+      isError: false,
+      terminalReason: "browser_detached",
+    });
+
+    mockOperationResult = { content: "close failed", isError: true };
+    await callHandler({ operation: "close", conversationId: "conv-live" });
+    expect(lifecycleFinishes[1]?.outcome).toMatchObject({
+      isError: true,
+      terminalReason: "browser_closed",
+    });
+  });
+
+  test("does not observe lifecycle for a standalone CLI operation", async () => {
+    await callHandler({ operation: "navigate", sessionId: "standalone" });
+    expect(lifecycleBegins).toEqual([]);
+    expect(lifecycleFinishes).toEqual([]);
   });
 
   // ── Input defaults ─────────────────────────────────────────────────

@@ -65,6 +65,7 @@ export interface UseTranscriptScrollArgs {
 export interface UseTranscriptScrollReturn {
   showScrollToLatest: boolean;
   scrollToLatest: (opts?: { behavior?: "auto" | "smooth" }) => void;
+  prepareForDisclosureToggle: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -205,6 +206,8 @@ export function useTranscriptScroll(
   const autoPinTimeoutRef = useRef<number | null>(null);
   const previousVisibilityRef = useRef(isVisible);
   const pendingScrollToLatestRef = useRef(false);
+  const suppressNextItemsLoadRef = useRef(false);
+  const renderedMessageIdsRef = useRef<ReadonlySet<string>>(new Set());
 
   const disengageAutoPin = useCallback(() => {
     shouldAutoPinRef.current = false;
@@ -224,6 +227,11 @@ export function useTranscriptScroll(
       autoPinTimeoutRef.current = null;
     }, 500);
   }, []);
+
+  const prepareForDisclosureToggle = useCallback(() => {
+    suppressNextItemsLoadRef.current = true;
+    disengageAutoPin();
+  }, [disengageAutoPin]);
 
   // Always clear the timer on unmount.
   useEffect(
@@ -305,13 +313,24 @@ export function useTranscriptScroll(
 
     switch (action.kind) {
       case "anchor-correct": {
-        const scrollElement = transcriptRef.current?.getScrollElement();
-        if (scrollElement) {
+        const transcript = transcriptRef.current;
+        const correctAnchor = () => {
+          const scrollElement = transcript?.getScrollElement();
+          if (!scrollElement) {
+            return;
+          }
           const heightDelta =
             scrollElement.scrollHeight - action.savedScrollHeight;
           scrollElement.scrollTop = action.savedScrollTop + heightDelta;
+          savedAnchorRef.current = null;
+        };
+        const savedKey = savedAnchorRef.current?.key;
+        if (
+          !savedKey ||
+          !transcript?.revealMessage?.(savedKey, correctAnchor)
+        ) {
+          correctAnchor();
         }
-        savedAnchorRef.current = null;
         break;
       }
       case "none":
@@ -383,6 +402,13 @@ export function useTranscriptScroll(
     // the current commit).
     const el = transcriptRef.current?.getScrollElement();
     if (el) {
+      const renderedMessageIds = new Set(
+        transcriptRef.current?.getRenderedMessageIds?.() ?? [],
+      );
+      const hasRenderedProgress = [...renderedMessageIds].some(
+        (id) => !renderedMessageIdsRef.current.has(id),
+      );
+      renderedMessageIdsRef.current = renderedMessageIds;
       const classification = classifyScrollPosition(
         {
           scrollTop: el.scrollTop,
@@ -417,7 +443,9 @@ export function useTranscriptScroll(
       if (
         classification.shouldLoadOlder &&
         !loadOlderInFlightRef.current &&
-        !haveSameItemKeys(prev, items)
+        !haveSameItemKeys(prev, items) &&
+        hasRenderedProgress &&
+        !suppressNextItemsLoadRef.current
       ) {
         if (!shouldAutoPinRef.current) {
           const firstItem = items[0];
@@ -432,6 +460,7 @@ export function useTranscriptScroll(
         loadOlderInFlightRef.current = true;
         latest.onLoadOlder();
       }
+      suppressNextItemsLoadRef.current = false;
     }
   }, [
     items,
@@ -578,6 +607,7 @@ export function useTranscriptScroll(
   // chain. One fetch per gesture, gated by the same in-flight lock.
   // -----------------------------------------------------------------------
   const maybeGestureLoadOlder = useCallback(() => {
+    suppressNextItemsLoadRef.current = false;
     const el = transcriptRef.current?.getScrollElement();
     if (!latestRef.current.isVisible || !el || loadOlderInFlightRef.current) {
       return;
@@ -675,6 +705,8 @@ export function useTranscriptScroll(
       clientHeight: target.clientHeight,
     };
     const latest = latestRef.current;
+    const suppressDisclosureLoad = suppressNextItemsLoadRef.current;
+    suppressNextItemsLoadRef.current = false;
     const classification = classifyScrollPosition(metrics, {
       hasMore: latest.hasMore,
       isLoadingOlder: latest.isLoadingOlder,
@@ -690,7 +722,11 @@ export function useTranscriptScroll(
       setShowScrollToLatest(classification.showScrollToLatest);
     }
 
-    if (classification.shouldLoadOlder && !loadOlderInFlightRef.current) {
+    if (
+      classification.shouldLoadOlder &&
+      !loadOlderInFlightRef.current &&
+      !suppressDisclosureLoad
+    ) {
       // Capture the top-most visible item AND the current scrollHeight so
       // the items-effect can restore the reader's viewport after the
       // older-page prepend lands. The restore is
@@ -756,5 +792,6 @@ export function useTranscriptScroll(
   return {
     showScrollToLatest,
     scrollToLatest,
+    prepareForDisclosureToggle,
   };
 }

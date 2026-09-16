@@ -102,11 +102,10 @@ describe("MultiActivityGroup — non-web tool group", () => {
       renderCard(toolCalls);
     // The unified group mounts the shared shell wrapper.
     expect(getByTestId("tool-progress-card-shell")).toBeTruthy();
-    // The header carousels the live step: the tool's "Working" title paired
-    // with the `command` input. The timeline lives in the side panel, so no
-    // step pills render inline.
+    // The header keeps the stable Working phase title and uses the localized
+    // terminal action label. Raw command detail remains in the steps panel.
     expect(getByText("Working")).toBeTruthy();
-    expect(getByText("git status")).toBeTruthy();
+    expect(getByText("Running a command")).toBeTruthy();
     expect(getByRole("button", { name: /view steps/i })).toBeTruthy();
     expect(queryByTestId("tool-step-pill")).toBeNull();
     // Single-step groups suppress the count pill — it would just duplicate
@@ -124,11 +123,10 @@ describe("MultiActivityGroup — non-web tool group", () => {
       }),
     ];
     const { getByText, queryByTestId } = renderCard(toolCalls);
-    // While the run is in flight the header carousels the live step: the
-    // "Working" title (rendered through the streaming shimmer) paired with
-    // the running command.
+    // While the run is in flight the stable Working title shimmers beside the
+    // localized terminal action label.
     expect(getByText("Working")).toBeTruthy();
-    expect(getByText("git status")).toBeTruthy();
+    expect(getByText("Running a command")).toBeTruthy();
     // The timeline lives in the side panel — no step rows inline.
     expect(queryByTestId("tool-step-pill")).toBeNull();
   });
@@ -751,10 +749,9 @@ describe("MultiActivityGroup — header reflects the latest step", () => {
       { kind: "toolCall", toolCall: toolCalls[0]! },
     ];
     const { getByText, queryByText } = renderCard(toolCalls, { items });
-    // The header carousels the live step: the "Working" title paired with
-    // the command.
+    // The header keeps the stable Working phase and localized action label.
     expect(getByText("Working")).toBeTruthy();
-    expect(getByText("echo hi")).toBeTruthy();
+    expect(getByText("Running a command")).toBeTruthy();
     // The leading thinking text is NOT promoted into the header (it's a
     // panel step only).
     expect(queryByText("Let me check the directory first.")).toBeNull();

@@ -117,6 +117,7 @@ import { withSqliteRetry } from "../util/sqlite-retry.js";
 import type { WorkspaceGitService } from "../workspace/git-service.js";
 import type { commitTurnChanges } from "../workspace/turn-commit.js";
 import type { AssistantAttachmentDraft } from "./assistant-attachments.js";
+import { BrowserModeSessionProducer } from "./browser-mode-session.js";
 import { ComputerUseModeSessionProducer } from "./computer-use-mode-session.js";
 import type { AssistantSurface } from "./conversation-agent-loop.js";
 import {
@@ -510,6 +511,9 @@ export class Conversation {
   readonly modeSessions: ConversationModeSessionCoordinator;
   /** Computer-use producer mapped onto the canonical session coordinator. */
   readonly computerUseModeSessions: ComputerUseModeSessionProducer;
+  /** Browser producer mapped onto the canonical session coordinator. */
+  readonly browserModeSessions: BrowserModeSessionProducer;
+  private liveVoiceResidencyLeases = 0;
   /**
    * The `clientMessageId` the running turn was started by, recorded in the same
    * synchronous step that takes the processing lock.
@@ -962,6 +966,9 @@ export class Conversation {
     this.conversationId = conversationId;
     this.modeSessions = new ConversationModeSessionCoordinator(conversationId);
     this.computerUseModeSessions = new ComputerUseModeSessionProducer(
+      this.modeSessions,
+    );
+    this.browserModeSessions = new BrowserModeSessionProducer(
       this.modeSessions,
     );
     this.parentConversationId = options?.parentConversationId;
@@ -2481,14 +2488,31 @@ export class Conversation {
     return !this.queue.isEmpty;
   }
 
+  acquireLiveVoiceResidency(): () => void {
+    this.liveVoiceResidencyLeases += 1;
+    let released = false;
+    return () => {
+      if (released) {
+        return;
+      }
+      released = true;
+      this.liveVoiceResidencyLeases = Math.max(
+        0,
+        this.liveVoiceResidencyLeases - 1,
+      );
+    };
+  }
+
   /**
    * True when dropping this instance would lose work that is still in flight:
-   * a live turn, a queued successor, or a child subagent.
+   * a live turn, queued successor, child subagent, or mode-session lifecycle.
    */
   hasInFlightWork(): boolean {
     return (
       this.isProcessing() ||
       this.hasQueuedMessages() ||
+      this.liveVoiceResidencyLeases > 0 ||
+      this.modeSessions.hasResidentWork() ||
       getSubagentManager().hasActiveChildren(this.conversationId)
     );
   }

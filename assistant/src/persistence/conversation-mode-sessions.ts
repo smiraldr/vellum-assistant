@@ -1,4 +1,4 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 
 import {
   type ModeSessionMode,
@@ -7,7 +7,11 @@ import {
   ModeSessionSummarySchema,
 } from "../api/mode-session.js";
 import { type DrizzleDb, getDb } from "./db-connection.js";
-import { conversationModeSessions } from "./schema/index.js";
+import {
+  readMessageSentAt,
+  readModeSessionMetadata,
+} from "./message-metadata.js";
+import { conversationModeSessions, messages } from "./schema/index.js";
 
 export type ModeSessionWriteFailureReason =
   | "already_exists"
@@ -329,4 +333,125 @@ export function recoverActiveConversationModeSessions(
     .where(eq(conversationModeSessions.status, "active"))
     .run() as unknown as { changes: number };
   return result.changes;
+}
+
+/** Recompute replaceable row boundaries after destructive transcript edits. */
+export function repairConversationModeSessionBoundaries(
+  conversationId: string,
+  options?: ModeSessionStoreOptions,
+): number {
+  const database = options?.db ?? getDb();
+  return database.transaction(
+    (tx) => {
+      const sessions = tx
+        .select()
+        .from(conversationModeSessions)
+        .where(eq(conversationModeSessions.conversationId, conversationId))
+        .all();
+      if (sessions.length === 0) {
+        return 0;
+      }
+      const sessionsById = new Map(
+        sessions.map((session) => [session.id, session]),
+      );
+      const boundaries = new Map<
+        string,
+        {
+          firstAt: number | null;
+          firstMessageId: string | null;
+          lastAt: number;
+          lastMessageId: string;
+        }
+      >();
+      for (const message of tx
+        .select({
+          id: messages.id,
+          role: messages.role,
+          createdAt: messages.createdAt,
+          metadata: messages.metadata,
+        })
+        .from(messages)
+        .where(eq(messages.conversationId, conversationId))
+        .orderBy(asc(messages.createdAt), asc(messages.id))
+        .all()) {
+        const owner = readModeSessionMetadata(message.metadata);
+        if (!owner) {
+          continue;
+        }
+        const session = sessionsById.get(owner.id);
+        if (!session || session.mode !== owner.mode) {
+          continue;
+        }
+        const at = readMessageSentAt(message.metadata) ?? message.createdAt;
+        const startsDisplayBoundary =
+          session.mode === "live_vision" ||
+          session.mode === "ambient" ||
+          message.role === "assistant";
+        const current = boundaries.get(owner.id);
+        if (!current) {
+          boundaries.set(owner.id, {
+            firstAt: startsDisplayBoundary ? at : null,
+            firstMessageId: startsDisplayBoundary ? message.id : null,
+            lastAt: at,
+            lastMessageId: message.id,
+          });
+        } else {
+          if (
+            startsDisplayBoundary &&
+            (current.firstAt === null || at < current.firstAt)
+          ) {
+            current.firstAt = at;
+            current.firstMessageId = message.id;
+          }
+          current.lastAt = Math.max(current.lastAt, at);
+          current.lastMessageId = message.id;
+        }
+      }
+
+      let repaired = 0;
+      for (const session of sessions) {
+        const boundary = boundaries.get(session.id);
+        const firstIncludedAt = boundary?.firstAt ?? null;
+        const firstIncludedMessageId = boundary?.firstMessageId ?? null;
+        const lastOwnedMessageId = boundary?.lastMessageId ?? null;
+        const observedLastActivityAt =
+          boundary?.lastAt ?? session.lastActivityAt;
+        const lastActivityAt =
+          session.endedAt === null
+            ? Math.max(session.lastActivityAt, observedLastActivityAt)
+            : Math.min(
+                session.endedAt,
+                Math.max(session.lastActivityAt, observedLastActivityAt),
+              );
+        if (
+          session.firstIncludedAt === firstIncludedAt &&
+          session.firstIncludedMessageId === firstIncludedMessageId &&
+          session.lastOwnedMessageId === lastOwnedMessageId &&
+          session.lastActivityAt === lastActivityAt
+        ) {
+          continue;
+        }
+        const result = tx
+          .update(conversationModeSessions)
+          .set({
+            firstIncludedAt,
+            firstIncludedMessageId,
+            lastOwnedMessageId,
+            lastActivityAt,
+            revision: sql`${conversationModeSessions.revision} + 1`,
+          })
+          .where(
+            and(
+              eq(conversationModeSessions.conversationId, conversationId),
+              eq(conversationModeSessions.id, session.id),
+              eq(conversationModeSessions.revision, session.revision),
+            ),
+          )
+          .run() as unknown as { changes: number };
+        repaired += result.changes;
+      }
+      return repaired;
+    },
+    { behavior: "immediate" },
+  );
 }

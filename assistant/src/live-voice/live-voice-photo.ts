@@ -71,10 +71,15 @@
 
 import { v7 as uuidv7 } from "uuid";
 
+import type { ModeSession } from "../api/mode-session.js";
 import {
   type PersistMessageOptions,
   persistQueuedMessageBody,
 } from "../daemon/conversation-messaging.js";
+import type {
+  ConversationModeSessionCoordinator,
+  ModeSessionSourceHandle,
+} from "../daemon/conversation-mode-session.js";
 import { findConversation } from "../daemon/conversation-registry.js";
 import {
   getConversationIfExists,
@@ -691,6 +696,7 @@ function persistStandaloneImage(
     | "onUndiscardedAttachments"
   >,
   acceptedIncarnation?: number,
+  modeSessionSource?: ModeSessionSourceHandle,
 ): Promise<LiveVoicePhotoResult> {
   let incarnation: number | null;
   try {
@@ -734,6 +740,33 @@ function persistStandaloneImage(
     }
     return Promise.resolve({ ok: false });
   }
+  const requestId = uuidv7();
+  let modeSessionCoordinator: ConversationModeSessionCoordinator | undefined;
+  let modeSession: ModeSession | undefined;
+  if (modeSessionSource) {
+    const conversation = findConversation(conversationId);
+    const owner = conversation?.modeSessions.claimTurn(
+      requestId,
+      modeSessionSource,
+      Date.now(),
+    );
+    if (!conversation || owner?.id !== modeSessionSource.id) {
+      log.warn(
+        { conversationId, attachmentId },
+        "Standalone camera image lost its accepted session owner",
+      );
+      reclaimOrDefer(
+        conversationId,
+        [attachmentId],
+        persistOptions.content,
+        requestId,
+        kind,
+      );
+      return Promise.resolve({ ok: false });
+    }
+    modeSessionCoordinator = conversation.modeSessions;
+    modeSession = { id: owner.id, mode: owner.mode };
+  }
   return enqueueStandaloneImagePersist(
     conversationId,
     attachmentId,
@@ -747,8 +780,12 @@ function persistStandaloneImage(
         incarnation,
         persistOptions,
         queueWaitMs,
+        requestId,
+        modeSession,
       ),
-  );
+  ).finally(() => {
+    modeSessionCoordinator?.releaseTurn(requestId);
+  });
 }
 
 /**
@@ -787,11 +824,10 @@ async function writeStandaloneImage(
     | "onUndiscardedAttachments"
   >,
   queueWaitMs: number,
+  requestId: string,
+  modeSession?: ModeSession,
 ): Promise<LiveVoicePhotoResult> {
   const { content } = persistOptions;
-  // The id the row is inserted under, so a failure can ask whether the insert
-  // landed before deciding the frame is safe to reclaim.
-  const requestId = uuidv7();
   // Ids the persist materialized for this attempt and then could not delete.
   // A frame already linked elsewhere is cloned into this conversation under a
   // fresh id, and nothing but the persist knows it: reclaiming under the id
@@ -897,7 +933,13 @@ async function writeStandaloneImage(
       // of.
       conversation.markHistoryStaleForForeignScope(persistOptions.trustContext);
 
-      announcePersistedImage(conversationId, content, persisted.id, kind);
+      announcePersistedImage(
+        conversationId,
+        content,
+        persisted.id,
+        kind,
+        modeSession,
+      );
 
       return {
         ok: true,
@@ -945,7 +987,13 @@ async function writeStandaloneImage(
       // `ensureActorScopedHistory` reloads instead of reusing what it holds.
       findConversation(conversationId)?.markHistoryStale();
       try {
-        announcePersistedImage(conversationId, content, requestId, kind);
+        announcePersistedImage(
+          conversationId,
+          content,
+          requestId,
+          kind,
+          modeSession,
+        );
       } catch (announceErr) {
         log.warn(
           { err: announceErr, conversationId, messageId: requestId },
@@ -992,6 +1040,7 @@ function announcePersistedImage(
   text: string,
   messageId: string,
   kind: "photo" | "sight_frame",
+  modeSession?: ModeSession,
 ): void {
   broadcastMessage({
     type: "user_message_echo",
@@ -999,6 +1048,7 @@ function announcePersistedImage(
     conversationId,
     messageId,
     ...(kind === "sight_frame" ? { cameraFrame: true as const } : {}),
+    ...(modeSession ? { modeSession } : {}),
   });
   recordConversationPersistedSeq(conversationId, getCurrentSeq());
   publishConversationMessagesChanged(conversationId);
@@ -1106,6 +1156,7 @@ export async function persistAmbientSightFrame(
   surface: SightFrameSurface,
   trustContext?: TrustContext,
   acceptedIncarnation?: number,
+  modeSessionSource?: ModeSessionSourceHandle,
 ): Promise<LiveVoicePhotoResult> {
   return persistStandaloneImage(
     conversationId,
@@ -1113,7 +1164,9 @@ export async function persistAmbientSightFrame(
     "sight_frame",
     {
       content: SIGHT_FRAME_MESSAGE_CONTENT,
-      metadata: surface === "voice" ? { voiceSessionTurn: true } : {},
+      metadata: {
+        ...(surface === "voice" ? { voiceSessionTurn: true } : {}),
+      },
       ...(trustContext ? { trustContext } : {}),
       scripted: true,
       // The camera sampled this, nobody sent it. Indexing it would feed
@@ -1126,5 +1179,6 @@ export async function persistAmbientSightFrame(
       sightFrameAttachmentIds: [attachmentId],
     },
     acceptedIncarnation,
+    modeSessionSource,
   );
 }

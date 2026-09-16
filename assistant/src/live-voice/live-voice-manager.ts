@@ -50,7 +50,27 @@ export function getLiveVoiceSessionManager(): LiveVoiceSessionManager {
           (
             require("./live-voice-session.js") as typeof import("./live-voice-session.js")
           ).createLiveVoiceSession;
-        return createSession(context);
+        return createSession(context, {
+          acquireModeSessionResidency: async (conversationId) => {
+            const { ensureConversationExists } =
+              require("../persistence/conversation-crud.js") as typeof import("../persistence/conversation-crud.js");
+            const { publishConversationListAndMetadataChanged } =
+              require("../runtime/sync/resource-sync-events.js") as typeof import("../runtime/sync/resource-sync-events.js");
+            if (ensureConversationExists(conversationId, "vellum")) {
+              publishConversationListAndMetadataChanged(
+                "created",
+                conversationId,
+              );
+            }
+            const { getOrCreateConversation } =
+              require("../daemon/conversation-store.js") as typeof import("../daemon/conversation-store.js");
+            const conversation = await getOrCreateConversation(conversationId);
+            return {
+              coordinator: conversation.modeSessions,
+              release: conversation.acquireLiveVoiceResidency(),
+            };
+          },
+        });
       },
       // The manager reclaims a slot on its own only when a session stopped
       // behaving: either its teardown overran the close budget, or its client

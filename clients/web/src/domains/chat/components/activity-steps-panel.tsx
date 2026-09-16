@@ -42,6 +42,7 @@ import {
   PhaseGroupedStepList,
   type PhaseSection,
 } from "@/domains/chat/components/tool-progress-card/phase-grouped-step-list";
+import { ACTION_DISPLAY_TRANSLATION_KEYS } from "@/domains/chat/components/tool-progress-card/action-display-label";
 import { ActivityScreenshotTile } from "@/domains/chat/components/activity-screenshot-tile";
 import {
   projectToolResultImages,
@@ -471,7 +472,12 @@ function TimelineStep({
   return (
     <ToolStepPill
       iconName={step.iconName}
-      label={step.activity || step.info || step.title}
+      label={
+        step.activity ||
+        (step.actionDisplayKey
+          ? t(ACTION_DISPLAY_TRANSLATION_KEYS[step.actionDisplayKey])
+          : step.info || step.title)
+      }
       active={activeDetail?.toolCallId === step.toolCallId}
       onClick={() => {
         if (!tc) {

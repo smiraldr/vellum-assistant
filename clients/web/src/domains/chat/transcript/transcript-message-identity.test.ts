@@ -9,14 +9,18 @@ import {
   messageItemMembers,
 } from "./transcript-message-identity";
 
-function message(id: string, mergedMessageIds?: string[]): DisplayMessage {
-  return { id, role: "user", mergedMessageIds };
+function message(
+  id: string,
+  mergedMessageIds?: string[],
+  clientMessageId?: string,
+): DisplayMessage {
+  return { id, role: "user", mergedMessageIds, clientMessageId };
 }
 
 test("resolves the host, camera members, and merged aliases once", () => {
   const firstFrame = message("frame-1", ["frame-alias"]);
   const secondFrame = message("frame-2");
-  const host = message("utterance", ["utterance-alias"]);
+  const host = message("utterance", ["utterance-alias"], "utterance-nonce");
   const item: MessageItem = {
     kind: "message",
     key: host.id,
@@ -30,8 +34,10 @@ test("resolves the host, camera members, and merged aliases once", () => {
     "frame-alias",
     "frame-2",
     "utterance",
+    "utterance-nonce",
     "utterance-alias",
   ]);
+  expect(messageItemHasIdentity(item, "utterance-nonce")).toBe(true);
   expect(messageItemHasIdentity(item, "frame-alias")).toBe(true);
   expect(messageItemHasIdentity(item, "missing")).toBe(false);
   expect(messageItemHasIdentity(item, null)).toBe(false);

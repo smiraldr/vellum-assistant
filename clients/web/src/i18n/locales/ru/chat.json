@@ -48,6 +48,17 @@
     "appExported": "Приложение экспортировано",
     "shareFailed": "Не удалось поделиться приложением"
   },
+  "actionDisplay": {
+    "click": "Нажатие",
+    "type": "Ввод текста",
+    "keyPress": "Нажатие клавиши",
+    "scroll": "Прокрутка",
+    "drag": "Перетаскивание",
+    "hover": "Наведение",
+    "observe": "Просмотр",
+    "navigate": "Навигация",
+    "terminal": "Выполнение команды"
+  },
   "sessionGroupRow": {
     "mode": {
       "computerUse": "Сеанс управления компьютером",
@@ -71,6 +82,9 @@
     "interruptedWithDurationAndLastActivity": "Прервано · {duration} · Последняя активность в {lastActivityTime}",
     "interruptedWithLastActivity": "Прервано · Последняя активность в {lastActivityTime}",
     "interruptedWithEnd": "Прервано · Завершено в {endTime}",
+    "disconnected": "Соединение потеряно",
+    "disconnectedWithDurationAndLastActivity": "Соединение потеряно · {duration} · Последняя активность в {lastActivityTime}",
+    "disconnectedWithLastActivity": "Соединение потеряно · Последняя активность в {lastActivityTime}",
     "timingUnavailable": "Данные о времени недоступны"
   },
   "assistantDesktop": {

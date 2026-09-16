@@ -3123,6 +3123,7 @@ export async function handleSendMessage(
           messageId,
           requestId,
           clientMessageId,
+          modeSession: conversation.modeSessions.getTurnOwner(requestId),
         });
         // The row this echo announces was durably persisted above, so advance
         // the snapshot↔stream anchor to the echo's seq (stamped inline by

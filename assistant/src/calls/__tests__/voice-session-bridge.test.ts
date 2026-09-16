@@ -721,6 +721,101 @@ describe("startVoiceTurn camera-frame attachments", () => {
       voiceSessionTurn: true,
     });
   });
+
+  test("claims a captured camera source before voice user persistence", async () => {
+    const events: string[] = [];
+    const fake = makeFakeConversation({
+      processing: false,
+      events,
+      onPersist: () => events.push("persisted"),
+    });
+    const claims: Array<{ turnId: string; sourceId: string }> = [];
+    Object.assign(fake.conversation, {
+      modeSessions: {
+        claimTurn: (
+          turnId: string,
+          source: { sourceId: string; id: string; mode: string },
+        ) => {
+          claims.push({ turnId, sourceId: source.sourceId });
+          events.push("claimed");
+          return { id: source.id, mode: source.mode };
+        },
+        releaseTurn: () => {},
+      },
+    });
+    fakeConversation = fake.conversation;
+
+    await startVoiceTurn({
+      ...makeTurnOptions(),
+      content: "what is this",
+      modeSessionSource: {
+        sourceId: "live-voice-camera:voice-1",
+        generation: 7,
+        activation: 1,
+        id: "session-camera",
+        mode: "live_vision",
+      },
+    });
+
+    expect(claims).toHaveLength(1);
+    expect(claims[0]?.sourceId).toBe("live-voice-camera:voice-1");
+    expect(events.indexOf("claimed")).toBeLessThan(events.indexOf("persist"));
+  });
+
+  test("uses preaccepted camera ownership without reclaiming a retired source", async () => {
+    let releaseIdle!: () => void;
+    const idle = new Promise<void>((resolve) => {
+      releaseIdle = resolve;
+    });
+    let reachedAdmission!: () => void;
+    const admissionStarted = new Promise<void>((resolve) => {
+      reachedAdmission = resolve;
+    });
+    const fake = makeFakeConversation({
+      processing: true,
+      waitForIdle: async () => {
+        reachedAdmission();
+        await idle;
+        fake.setProcessingFlag(false);
+        return true;
+      },
+    });
+    const claims: string[] = [];
+    const owner = { id: "session-camera", mode: "live_vision" as const };
+    Object.assign(fake.conversation, {
+      modeSessions: {
+        claimTurn: (turnId: string) => {
+          claims.push(turnId);
+          return undefined;
+        },
+        getTurnOwner: (turnId: string) =>
+          turnId === "preaccepted-request" ? owner : undefined,
+        releaseTurn: () => {},
+      },
+    });
+    fakeConversation = fake.conversation;
+
+    const starting = startVoiceTurn({
+      ...makeTurnOptions(),
+      content: "what is this",
+      preacceptedModeSession: {
+        requestId: "preaccepted-request",
+        source: {
+          sourceId: "live-voice-camera:voice-1",
+          generation: 7,
+          activation: 1,
+          ...owner,
+        },
+      },
+    });
+    await admissionStarted;
+
+    releaseIdle();
+    await starting;
+
+    expect(claims).toEqual([]);
+    expect(fake.lastPersistOpts()?.requestId).toBe("preaccepted-request");
+  });
 });
 
 describe("startVoiceTurn hiddenSyntheticPrompt", () => {

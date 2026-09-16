@@ -92,6 +92,7 @@ import {
   REFERENTIAL_FORK_STRATEGY,
   resolveConversationLineage,
 } from "./conversation-lineage.js";
+import { repairConversationModeSessionBoundaries } from "./conversation-mode-sessions.js";
 import { deleteConversationRowsInBatches } from "./conversation-row-batch-delete.js";
 import {
   BACKGROUND_CONVERSATION_TYPES,
@@ -4371,6 +4372,10 @@ export function deleteLastExchange(conversationId: string): number {
     } satisfies MessageDeletedInputContext);
   }
 
+  if (deleted > 0) {
+    repairConversationModeSessionBoundaries(conversationId);
+  }
+
   return deleted;
 }
 
@@ -4681,6 +4686,7 @@ export function deleteMessageById(
       messageId,
       createdAt: msgRow.createdAt,
     } satisfies MessageDeletedInputContext);
+    repairConversationModeSessionBoundaries(msgRow.conversationId);
   }
 
   return result;

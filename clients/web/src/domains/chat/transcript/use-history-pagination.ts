@@ -22,7 +22,7 @@ import {
   useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
-import { useCallback, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   fetchLatestHistoryPage,
@@ -33,6 +33,7 @@ import type { PaginatedHistoryResult } from "@/domains/chat/transcript/types";
 import { mergeAdjacentAssistantMessages } from "@/domains/chat/utils/message-merge";
 import type { DisplayMessage } from "@/domains/chat/types/types";
 import type { BackgroundTaskEntry } from "@/domains/chat/background-task-store";
+import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
 
 // ---------------------------------------------------------------------------
 // Query key
@@ -92,6 +93,60 @@ export function aggregateBackgroundToolCompletions(
   return acc.length > 0 ? acc : undefined;
 }
 
+export function aggregateModeSessionDescriptors(
+  pages: readonly PaginatedHistoryResult[] | undefined,
+  previous: ModeSessionDescriptor[] = [],
+): ModeSessionDescriptor[] {
+  if (!pages?.length) {
+    return [];
+  }
+  const byId = new Map<string, ModeSessionDescriptor>();
+  const representedIds = new Set<string>();
+  for (const page of pages) {
+    for (const message of page.messages) {
+      if (message.modeSession) {
+        representedIds.add(message.modeSession.id);
+      }
+    }
+    for (const descriptor of page.modeSessions ?? []) {
+      const current = byId.get(descriptor.summary.id);
+      if (!current || descriptor.summary.revision > current.summary.revision) {
+        byId.set(descriptor.summary.id, descriptor);
+      }
+    }
+  }
+  for (const descriptor of previous) {
+    const id = descriptor.summary.id;
+    const current = byId.get(id);
+    if (
+      current == null &&
+      (descriptor.summary.status === "active" || representedIds.has(id))
+    ) {
+      byId.set(id, descriptor);
+      continue;
+    }
+    if (current && current.summary.revision <= descriptor.summary.revision) {
+      byId.set(id, descriptor);
+    }
+  }
+  const descriptors = [...byId.values()];
+  return descriptors.length === previous.length &&
+    descriptors.every((descriptor, index) => descriptor === previous[index])
+    ? previous
+    : descriptors;
+}
+
+const MAX_REFRESHED_MODE_SESSION_IDS = 50;
+
+export function activeModeSessionIdsForRefresh(
+  pages: readonly PaginatedHistoryResult[] | undefined,
+): string[] {
+  return aggregateModeSessionDescriptors(pages)
+    .filter((descriptor) => descriptor.summary.status === "active")
+    .slice(0, MAX_REFRESHED_MODE_SESSION_IDS)
+    .map((descriptor) => descriptor.summary.id);
+}
+
 /** The shape `useInfiniteQuery` stores under a conversation-history key. */
 export type HistoryCache = InfiniteData<PaginatedHistoryResult>;
 
@@ -115,6 +170,8 @@ export interface HistoryPaginationResult {
     NonNullable<PaginatedHistoryResult["subagentNotifications"]> | undefined;
   /** Background-task completions aggregated across all loaded pages, oldest-first. */
   backgroundToolCompletions: BackgroundTaskEntry[] | undefined;
+  /** Lifecycle descriptors aggregated across every loaded page. */
+  modeSessions?: ModeSessionDescriptor[];
   /** First-time load with no cached data available. */
   isLoading: boolean;
   /** Whether the current query status is successful. */
@@ -155,6 +212,10 @@ export function useHistoryPagination({
   enabled,
 }: UseHistoryPaginationParams): HistoryPaginationResult {
   const queryClient = useQueryClient();
+  const [acceptedModeSessions, setAcceptedModeSessions] = useState<{
+    conversationId: string | null;
+    descriptors: ModeSessionDescriptor[];
+  }>({ conversationId, descriptors: [] });
 
   const queryKey = useMemo(
     () => conversationHistoryQueryKey(assistantId, conversationId),
@@ -171,7 +232,13 @@ export function useHistoryPagination({
       if (pageParam != null) {
         return fetchOlderHistoryPage(assistantId, conversationId, pageParam);
       }
-      return fetchLatestHistoryPage(assistantId, conversationId);
+      const cached = queryClient.getQueryData<HistoryCache>(queryKey);
+      return fetchLatestHistoryPage(
+        assistantId,
+        conversationId,
+        undefined,
+        activeModeSessionIdsForRefresh(cached?.pages),
+      );
     },
     initialPageParam: null as number | null,
     getNextPageParam: (lastPage): number | undefined => {
@@ -236,6 +303,27 @@ export function useHistoryPagination({
     () => aggregateBackgroundToolCompletions(query.data?.pages),
     [query.data],
   );
+  const modeSessions = useMemo(
+    () =>
+      aggregateModeSessionDescriptors(
+        query.data?.pages,
+        acceptedModeSessions.conversationId === conversationId
+          ? acceptedModeSessions.descriptors
+          : [],
+      ),
+    [acceptedModeSessions, conversationId, query.data],
+  );
+  useEffect(() => {
+    setAcceptedModeSessions((current) => {
+      if (
+        current.conversationId === conversationId &&
+        current.descriptors === modeSessions
+      ) {
+        return current;
+      }
+      return { conversationId, descriptors: modeSessions };
+    });
+  }, [conversationId, modeSessions]);
 
   const latestPage = query.data?.pages[0];
   const oldestPage = query.data?.pages[query.data.pages.length - 1];
@@ -248,17 +336,19 @@ export function useHistoryPagination({
     queryClient.removeQueries({ queryKey });
   }, [queryClient, queryKey]);
 
+  const { hasNextPage, isFetchingNextPage, fetchNextPage } = query;
   const fetchOlderPage = useCallback(() => {
-    if (query.hasNextPage && !query.isFetchingNextPage) {
-      void query.fetchNextPage();
+    if (hasNextPage && !isFetchingNextPage) {
+      void fetchNextPage();
     }
-  }, [query.hasNextPage, query.isFetchingNextPage, query.fetchNextPage]);
+  }, [fetchNextPage, hasNextPage, isFetchingNextPage]);
 
   return {
     messages,
     latestPage,
     subagentNotifications,
     backgroundToolCompletions,
+    modeSessions,
     isLoading: query.isLoading,
     isSuccess: query.isSuccess,
     isError: query.isError,

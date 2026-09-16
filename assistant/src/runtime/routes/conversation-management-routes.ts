@@ -732,6 +732,7 @@ async function handleRetryLastAssistantTurn({
     if (!discarded) {
       throw new UnprocessableEntityError("No user message to retry from");
     }
+    conversation.modeSessions.invalidateAllStructuralWaits();
   } catch (err) {
     if (conversation.abortController === abortController) {
       conversation.abortController = null;

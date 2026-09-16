@@ -38,8 +38,16 @@ interface ProcessMessageCall {
 
 function makeContext(sent: AssistantEvent[] = []): Conversation & {
   processMessageCalls: ProcessMessageCall[];
+  acceptedSurfaceResponses: Array<{
+    requestId: string;
+    response: { kind: "surface"; responseId: string };
+  }>;
 } {
   const processMessageCalls: ProcessMessageCall[] = [];
+  const acceptedSurfaceResponses: Array<{
+    requestId: string;
+    response: { kind: "surface"; responseId: string };
+  }> = [];
   return asConversation({
     conversationId: "conv-1",
     sendToClient: (msg: AssistantEvent) => sent.push(msg),
@@ -54,6 +62,18 @@ function makeContext(sent: AssistantEvent[] = []): Conversation & {
     accumulatedSurfaceState: new Map<string, Record<string, unknown>>(),
     surfaceActionRequestIds: new Set<string>(),
     currentTurnSurfaces: [],
+    modeSessions: {
+      acceptTurn: (
+        requestId: string,
+        response?: { kind: "surface"; responseId: string },
+      ) => {
+        if (response?.kind === "surface") {
+          acceptedSurfaceResponses.push({ requestId, response });
+        }
+        return undefined;
+      },
+      getTurnOwner: () => undefined,
+    } as unknown as Conversation["modeSessions"],
     isProcessing: () => false,
     enqueueMessage: () => ({ queued: false, requestId: "req-1" }),
     getQueueDepth: () => 0,
@@ -70,6 +90,7 @@ function makeContext(sent: AssistantEvent[] = []): Conversation & {
     },
     withSurface: createSurfaceMutex(),
     processMessageCalls,
+    acceptedSurfaceResponses,
   });
 }
 
@@ -131,6 +152,13 @@ describe("surface action delivery to assistant", () => {
     expect(call.content).toContain("row-1");
     expect(call.content).toContain("row-2");
     expect(call.activeSurfaceId).toBe(surfaceId);
+    expect(call.requestId).toBeDefined();
+    expect(ctx.acceptedSurfaceResponses).toEqual([
+      {
+        requestId: call.requestId!,
+        response: { kind: "surface", responseId: surfaceId },
+      },
+    ]);
 
     // Verify pending action was cleared
     expect(ctx.pendingSurfaceActions.has(surfaceId)).toBe(false);

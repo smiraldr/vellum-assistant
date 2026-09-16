@@ -81,7 +81,9 @@ import {
 } from "react";
 
 import {
+  endLiveVoiceSightSession,
   isLiveVoiceUserSpeaking,
+  startLiveVoiceSightSession,
   takeLiveVoiceLookFrame,
   useLiveVoiceStore,
 } from "@/domains/chat/voice/live-voice/live-voice-store";
@@ -128,6 +130,15 @@ const ERROR_CONTEXT = "voice-room sight: sample/upload frame";
  * behind it, not just the next poll.
  */
 const LOOK_KEEP_TTL_MS = 5_000;
+
+let nextCameraEpoch = 1;
+
+function allocateCameraEpoch(): number {
+  const epoch = nextCameraEpoch;
+  nextCameraEpoch =
+    nextCameraEpoch === Number.MAX_SAFE_INTEGER ? 1 : nextCameraEpoch + 1;
+  return epoch;
+}
 
 /** The most recent frame the call was given. */
 export interface VoiceRoomSightFrame {
@@ -471,6 +482,10 @@ export function useVoiceRoomSight(
     // `active`, which a capture in a torn-down loop still reads as the value of
     // the render it started in.
     sight.grantConsent();
+    const cameraEpoch = allocateCameraEpoch();
+    const lifecycle = startLiveVoiceSightSession(cameraEpoch, "live")
+      ? { cameraEpoch, source: "live" as const }
+      : undefined;
     /**
      * Put a frame the call was given on screen.
      *
@@ -528,6 +543,7 @@ export function useVoiceRoomSight(
           void sight.capture({
             assistantId,
             keep: keepOrigin(decision),
+            ...(lifecycle ? { lifecycle } : {}),
             produceFrame: (filename) => captureVideoFrame(video, filename),
             onShared,
           });
@@ -550,6 +566,7 @@ export function useVoiceRoomSight(
           void sight.capture({
             assistantId,
             keep: keepOrigin(decision),
+            ...(lifecycle ? { lifecycle } : {}),
             produceFrame: async (filename) =>
               new File([sample], filename, { type: "image/jpeg" }),
             onShared,
@@ -561,6 +578,9 @@ export function useVoiceRoomSight(
       stopSampling = source.stop;
     }
     return () => {
+      if (lifecycle) {
+        endLiveVoiceSightSession(cameraEpoch);
+      }
       // What voids the work in flight for every other way a run can end: an
       // unmount, a closed room, a viewfinder swapped under it, the app being
       // put away. The revocation is the bump, so a run the user ended finds it

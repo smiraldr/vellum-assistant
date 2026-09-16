@@ -37,6 +37,7 @@ import {
   type LiveVoiceSttPartialServerFrame,
   type LiveVoiceActivityServerFrame,
   type LiveVoiceEntry,
+  type LiveVoiceSightSource,
   type LiveVoiceThinkingServerFrame,
   type LiveVoiceTtsAudioServerFrame,
   type LiveVoiceTtsDoneServerFrame,
@@ -46,6 +47,7 @@ import {
   type LiveVoiceUtteranceEndServerFrame,
   parseServerFrame,
 } from "@/domains/chat/voice/live-voice/protocol";
+import { supportsSightSessions } from "@/lib/backwards-compat/sight-sessions";
 import { detectClientOs } from "@/runtime/platform-detection";
 
 /** Fail the session if no `ready` frame arrives within this window. */
@@ -67,9 +69,7 @@ export const RETRYABLE_LIVE_VOICE_CLOSE_CODES: ReadonlySet<number> = new Set([
 
 /** Reason a live-voice session failed, surfaced via the `error` event. */
 export type LiveVoiceClientErrorReason =
-  | "connection-failed"
-  | "protocol-error"
-  | "timeout";
+  "connection-failed" | "protocol-error" | "timeout";
 
 export interface LiveVoiceClientError {
   readonly reason: LiveVoiceClientErrorReason;
@@ -320,6 +320,7 @@ export class LiveVoiceChannelClient {
   // `unknown_type`, which is indistinguishable from the `update_config`
   // rejection and would latch in-session settings off for the whole session.
   private textInputSupported = false;
+  private sightSessionsSupported = false;
 
   private readonly listeners: {
     [E in LiveVoiceClientEventName]: Set<LiveVoiceClientEventHandler<E>>;
@@ -534,6 +535,7 @@ export class LiveVoiceChannelClient {
   sightFrame(
     attachmentId: string,
     timing?: LiveVoiceSightFrameTiming,
+    lifecycle?: { cameraEpoch: number; source: LiveVoiceSightSource },
   ): boolean {
     if (this.state !== "active") {
       return false;
@@ -542,9 +544,26 @@ export class LiveVoiceChannelClient {
       JSON.stringify({
         type: "sight_frame",
         attachmentId,
+        ...(this.sightSessionsSupported && lifecycle ? lifecycle : {}),
         ...(timing ? { timing } : {}),
       }),
     );
+  }
+
+  sightStart(cameraEpoch: number, source: LiveVoiceSightSource): boolean {
+    if (this.state !== "active" || !this.sightSessionsSupported) {
+      return false;
+    }
+    return this.trySend(
+      JSON.stringify({ type: "sight_start", cameraEpoch, source }),
+    );
+  }
+
+  sightEnd(cameraEpoch: number): boolean {
+    if (this.state !== "active" || !this.sightSessionsSupported) {
+      return false;
+    }
+    return this.trySend(JSON.stringify({ type: "sight_end", cameraEpoch }));
   }
 
   /**
@@ -667,6 +686,7 @@ export class LiveVoiceChannelClient {
         this.clearConnectTimeout();
         this.state = "active";
         this.textInputSupported = frame.textInput === true;
+        this.sightSessionsSupported = supportsSightSessions(frame);
         this.emit("ready", frame);
         return;
       case "busy":

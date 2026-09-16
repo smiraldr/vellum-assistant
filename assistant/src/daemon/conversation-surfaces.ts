@@ -178,12 +178,40 @@ const NON_BLOCKING_PENDING_SURFACE_TYPES = new Set<SurfaceType>([
 export function hasBlockingPendingSurface(ctx: {
   pendingSurfaceActions: Map<string, { surfaceType: SurfaceType }>;
 }): boolean {
-  for (const entry of ctx.pendingSurfaceActions.values()) {
+  return blockingPendingSurfaceIds(ctx).length > 0;
+}
+
+export function blockingPendingSurfaceIds(ctx: {
+  pendingSurfaceActions: Map<string, { surfaceType: SurfaceType }>;
+}): string[] {
+  const ids: string[] = [];
+  for (const [surfaceId, entry] of ctx.pendingSurfaceActions) {
     if (!NON_BLOCKING_PENDING_SURFACE_TYPES.has(entry.surfaceType)) {
-      return true;
+      ids.push(surfaceId);
     }
   }
-  return false;
+  return ids;
+}
+
+function acceptModeSessionSurfaceResponse(
+  ctx: Conversation,
+  requestId: string,
+  surfaceId: string,
+): void {
+  ctx.modeSessions?.acceptTurn(requestId, {
+    kind: "surface",
+    responseId: surfaceId,
+  });
+}
+
+function invalidateModeSessionSurfaceWait(
+  ctx: Partial<Pick<Conversation, "modeSessions">>,
+  surfaceId: string,
+): void {
+  ctx.modeSessions?.invalidateStructuralWait({
+    kind: "surface",
+    responseId: surfaceId,
+  });
 }
 
 /**
@@ -1292,7 +1320,8 @@ export function cleanupStandaloneSurface(
     | "lastSurfaceAction"
     | "accumulatedSurfaceState"
     | "surfaceUndoStacks"
-  >,
+  > &
+    Partial<Pick<Conversation, "modeSessions">>,
   surfaceId: string,
 ): void {
   const entry = ctx.pendingStandaloneSurfaces?.get(surfaceId);
@@ -1305,6 +1334,7 @@ export function cleanupStandaloneSurface(
   ctx.lastSurfaceAction.delete(surfaceId);
   ctx.accumulatedSurfaceState.delete(surfaceId);
   ctx.surfaceUndoStacks.delete(surfaceId);
+  invalidateModeSessionSurfaceWait(ctx, surfaceId);
 
   // Record a tombstone so late client actions are silently dropped.
   if (ctx.recentlyCompletedStandaloneSurfaces) {
@@ -2089,6 +2119,7 @@ export async function handleSurfaceAction(
     // sibling button presses on the same card aren't blocked behind a stale
     // expectation that this surface still owes an answer to the LLM.
     ctx.pendingSurfaceActions.delete(surfaceId);
+    invalidateModeSessionSurfaceWait(ctx, surfaceId);
     // `ctx` is the origin Conversation — inherit its trust context so the
     // spawned conversation keeps guardian / trust-class state.
     //
@@ -2284,6 +2315,8 @@ export async function handleSurfaceAction(
       return QUEUE_FULL_RESULT;
     }
 
+    acceptModeSessionSurfaceResponse(ctx, requestId, surfaceId);
+
     // Terminal user commit accepted — record the activation milestone if this
     // surface was tagged (best-effort, no-op otherwise). Deferred until after
     // the rejection check so a queue-full click doesn't over-report a moment
@@ -2310,6 +2343,7 @@ export async function handleSurfaceAction(
         type: "user_message_echo",
         text: prompt,
         conversationId: ctx.conversationId,
+        modeSession: ctx.modeSessions.getTurnOwner(requestId),
       });
     }
 
@@ -2537,6 +2571,8 @@ export async function handleSurfaceAction(
     return QUEUE_FULL_RESULT;
   }
 
+  acceptModeSessionSurfaceResponse(ctx, requestId, surfaceId);
+
   // Terminal user commit accepted — record the activation milestone if this
   // surface was tagged (best-effort, no-op otherwise). Deferred until after the
   // rejection check so a queue-full click doesn't over-report a moment (and the
@@ -2563,6 +2599,7 @@ export async function handleSurfaceAction(
       type: "user_message_echo",
       text: prompt,
       conversationId: ctx.conversationId,
+      modeSession: ctx.modeSessions.getTurnOwner(requestId),
     });
   }
   if (result.queued) {

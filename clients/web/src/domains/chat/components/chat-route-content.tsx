@@ -143,6 +143,7 @@ import type {
 } from "@/domains/chat/types/types";
 import type { TranscriptItem } from "@/domains/chat/transcript/types";
 import type { HistoryPaginationResult } from "@/domains/chat/transcript/use-history-pagination";
+import type { SessionDisclosureState } from "@/domains/chat/transcript/use-session-disclosure-state";
 import type { UIContext } from "@/domains/chat/turn-selectors";
 import { getDiskPressureChatBlockReason } from "@/assistant/disk-pressure";
 import { useActiveProfileModel } from "@/domains/chat/hooks/use-active-profile-model";
@@ -220,6 +221,7 @@ export interface ChatMainPanelProps {
 
   // History pagination (from useConversationLoader in ActiveChatView)
   historyPagination: HistoryPaginationResult;
+  sessionDisclosureState?: SessionDisclosureState;
 
   // Disk pressure (single instance lives in ActiveChatView; passed down to
   // avoid duplicate polling intervals and bus subscriptions)
@@ -311,6 +313,7 @@ export function ChatMainPanel({
   onRetryLatestTurn,
   handleInspectMessage,
   historyPagination,
+  sessionDisclosureState,
   diskPressure,
   resourcePressure,
   setRefreshEpoch,
@@ -757,6 +760,7 @@ export function ChatMainPanel({
     showOnboardingChoice,
     creditsExhausted: balanceStatus.isExhausted,
   });
+  const sessionGroupsEnabled = useClientFeatureFlagStore.use.sessionGroups();
 
   // --- Ref writes (connect hook outputs to ActiveChatView's debug refs) ---
   useEffect(() => {
@@ -1326,6 +1330,14 @@ export function ChatMainPanel({
   const chatTranscriptProps: TranscriptProps = {
     items: transcriptItems,
     conversationId: activeConversationId,
+    modeSessionDescriptors: historyPagination.modeSessions,
+    sessionDisclosureState,
+    sessionGroupsEnabled,
+    sessionClockConnected:
+      assistantState.kind === "active" &&
+      !(isMobile && documentRoute.showingDocument),
+    onBeforeSessionDisclosureToggle:
+      scrollCoordinator.prepareForDisclosureToggle,
     assistantDisplayName: assistantName?.trim() || undefined,
     onOpenRuleEditor: handleOpenRuleEditorForToolCall,
     onOpenApp: handleOpenApp,
@@ -1612,7 +1624,9 @@ export function ChatMainPanel({
         documentRoute.showingDocument ? "document" : "conversation"
       }
       sessionNavigationSlot={
-        isMobile && documentRoute.surfaceId && !documentRoute.showingDocument ? (
+        isMobile &&
+        documentRoute.surfaceId &&
+        !documentRoute.showingDocument ? (
           <DocumentChatNavigation
             onReopenDocument={documentRoute.reopenDocument}
           />

@@ -136,6 +136,28 @@ describe("SessionGroupRow", () => {
     expect(queryByTestId("session-group-live-indicator")).toBeNull();
   });
 
+  test("shows cached activity without a pulse after the connection is lost", () => {
+    const { getByRole, queryByTestId } = render(
+      <ControlledRow
+        mode="browser"
+        summary={{
+          state: "disconnected",
+          startedAt: STARTED_AT,
+          lastActivityAt: ENDED_AT,
+          now: ENDED_AT + 60_000,
+        }}
+      >
+        <div>Cached child</div>
+      </ControlledRow>,
+    );
+    const summaryText = getByRole("button").textContent ?? "";
+
+    expect(summaryText).toContain("Connection lost");
+    expect(summaryText).toContain("Last active");
+    expect(summaryText).not.toContain("Working");
+    expect(queryByTestId("session-group-live-indicator")).toBeNull();
+  });
+
   test.each([
     [
       "completed end",

@@ -25,15 +25,20 @@ export function messageItemMembers(
   return messages;
 }
 
-/** Canonical ids and merged aliases represented by one transcript item. */
+function messageIdentityIds(message: DisplayMessage): readonly string[] {
+  return [
+    message.id,
+    ...(message.clientMessageId ? [message.clientMessageId] : []),
+    ...(message.mergedMessageIds ?? []).filter((id) => id.length > 0),
+  ];
+}
+
+/** Canonical, optimistic, and merged ids represented by one transcript item. */
 export function messageItemIdentityIds(item: MessageItem): readonly string[] {
   const ids = new Set<string>();
   for (const message of messageItemMembers(item)) {
-    ids.add(message.id);
-    for (const alias of message.mergedMessageIds ?? []) {
-      if (alias.length > 0) {
-        ids.add(alias);
-      }
+    for (const id of messageIdentityIds(message)) {
+      ids.add(id);
     }
   }
   return [...ids];

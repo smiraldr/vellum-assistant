@@ -4,6 +4,7 @@ export type SessionGroupPresentationState =
   | "finishing"
   | "completed"
   | "interrupted"
+  | "disconnected"
   | "unavailable"
   | "settledSegment";
 
@@ -26,6 +27,12 @@ export function isActiveSessionGroupState(
   state: SessionGroupPresentationState,
 ): state is "working" | "waiting" | "finishing" {
   return state === "working" || state === "waiting" || state === "finishing";
+}
+
+export function shouldPulseSessionGroupState(
+  state: SessionGroupPresentationState,
+): boolean {
+  return state === "working";
 }
 
 export function normalizeSessionTimestamp(

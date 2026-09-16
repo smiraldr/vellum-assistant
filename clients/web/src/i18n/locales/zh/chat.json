@@ -98,6 +98,17 @@
   "assistantContentDisclosure": {
     "earlierActivity": "更早的活动"
   },
+  "actionDisplay": {
+    "click": "点击",
+    "type": "输入",
+    "keyPress": "按键",
+    "scroll": "滚动",
+    "drag": "拖动",
+    "hover": "悬停",
+    "observe": "查看",
+    "navigate": "导航",
+    "terminal": "运行命令"
+  },
   "sessionGroupRow": {
     "mode": {
       "computerUse": "计算机操作会话",
@@ -121,6 +132,9 @@
     "interruptedWithDurationAndLastActivity": "已中断 · {duration} · 上次活动于 {lastActivityTime}",
     "interruptedWithLastActivity": "已中断 · 上次活动于 {lastActivityTime}",
     "interruptedWithEnd": "已中断 · 结束于 {endTime}",
+    "disconnected": "连接已断开",
+    "disconnectedWithDurationAndLastActivity": "连接已断开 · {duration} · 最后活动时间 {lastActivityTime}",
+    "disconnectedWithLastActivity": "连接已断开 · 最后活动时间 {lastActivityTime}",
     "timingUnavailable": "时间不可用"
   },
   "assistantDesktop": {

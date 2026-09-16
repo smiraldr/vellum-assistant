@@ -98,6 +98,17 @@
   "assistantContentDisclosure": {
     "earlierActivity": "Actividad anterior"
   },
+  "actionDisplay": {
+    "click": "Haciendo clic",
+    "type": "Escribiendo",
+    "keyPress": "Pulsando una tecla",
+    "scroll": "Desplazando",
+    "drag": "Arrastrando",
+    "hover": "Pasando el cursor",
+    "observe": "Observando",
+    "navigate": "Navegando",
+    "terminal": "Ejecutando un comando"
+  },
   "sessionGroupRow": {
     "mode": {
       "computerUse": "Sesión de uso del ordenador",
@@ -121,6 +132,9 @@
     "interruptedWithDurationAndLastActivity": "Interrumpida · {duration} · Última actividad a las {lastActivityTime}",
     "interruptedWithLastActivity": "Interrumpida · Última actividad a las {lastActivityTime}",
     "interruptedWithEnd": "Interrumpida · Finalizó a las {endTime}",
+    "disconnected": "Conexión perdida",
+    "disconnectedWithDurationAndLastActivity": "Conexión perdida · {duration} · Última actividad a las {lastActivityTime}",
+    "disconnectedWithLastActivity": "Conexión perdida · Última actividad a las {lastActivityTime}",
     "timingUnavailable": "Horario no disponible"
   },
   "assistantDesktop": {

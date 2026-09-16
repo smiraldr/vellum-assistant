@@ -20,9 +20,9 @@ transcript = selectTranscriptMessages(snapshot ⊕ optimisticSends)
 - **`snapshot`** (chat-session store, `PaginatedHistoryResult | null`) — the
   conversation's history in the `/messages` page shape, projected to
   `DisplayMessage[]`. Seeded from the server snapshot and advanced by folding
-  stream events. This is the single source of *committed* transcript content:
+  stream events. This is the single source of _committed_ transcript content:
   assistant text/reasoning, tool calls and results, surfaces, the inline
-  confirmation marker, echoed user rows.
+  confirmation marker, echoed user rows, and optional mode-session membership.
 - **`optimisticSends`** (chat-session store, `DisplayMessage[]`) — user messages
   the client has sent but the server hasn't echoed back yet (including queued
   sends). Held apart from the snapshot so it's explicit they're unconfirmed.
@@ -56,6 +56,13 @@ turn/interaction stores, reconciliation triggers, conversation-cache
 subagent re-anchoring — and never write transcript rows. To render content for a
 new event, add a reducer case rather than mutating from a handler; that's what
 keeps replay, resync, and rebuild equivalent.
+
+Mode-session membership follows the same reducer boundary. Designated structural
+events can stamp optional `modeSession` metadata onto the row they create or
+update. Text and thinking deltas keep their existing shape and preserve the
+row's stamp. History can also provide `modeSessionActivity` bounds widened
+across canonical message folds. The transcript remains flat in the store; the
+flagged render projection groups rows only after latest-turn partitioning.
 
 ## Optimistic sends
 
@@ -105,6 +112,10 @@ later can't be ring-replayed. The recovery path is a refetch:
 - When a turn returns to idle, history is invalidated; the committed-snapshot
   effect then reseeds from the authoritative server copy (canonical ids/ordering,
   persisted surfaces), replacing the client-folded turn.
+- History responses can include batched `modeSessions` descriptors. Active
+  descriptor ids from the cached page are included in the next latest-page
+  request so completion remains visible even after the group's rows move
+  outside that page. Duplicate descriptors resolve by monotonic revision.
 
 ## Invariant
 
@@ -116,13 +127,13 @@ produces the same history as a clean one. Keep new reducer cases pure and
 
 ## Map
 
-| Concern | Lives in |
-| --- | --- |
-| Render seam | `transcript/use-transcript-messages.ts` → `selectTranscriptMessages` |
-| Content fold (single writer) | `transcript/rolling-snapshot.ts` |
-| Snapshot + optimistic sends store | `chat-session-store.ts` |
-| Event-stream wiring (feeds reducer + handlers) | `hooks/use-event-stream.ts` |
-| Control-plane handlers | `utils/stream-handlers/*` |
-| Send / optimistic / queue | `hooks/use-send-message.ts`, `hooks/use-message-queue.ts` |
-| Reseed + reconnect refetch | `hooks/use-conversation-history.ts`, `hooks/use-message-reconciliation.ts` |
-| Event buffer (resync tail) | `lib/streaming/stream-debug.ts` |
+| Concern                                        | Lives in                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------- |
+| Render seam                                    | `transcript/use-transcript-messages.ts` → `selectTranscriptMessages`       |
+| Content fold (single writer)                   | `transcript/rolling-snapshot.ts`                                           |
+| Snapshot + optimistic sends store              | `chat-session-store.ts`                                                    |
+| Event-stream wiring (feeds reducer + handlers) | `hooks/use-event-stream.ts`                                                |
+| Control-plane handlers                         | `utils/stream-handlers/*`                                                  |
+| Send / optimistic / queue                      | `hooks/use-send-message.ts`, `hooks/use-message-queue.ts`                  |
+| Reseed + reconnect refetch                     | `hooks/use-conversation-history.ts`, `hooks/use-message-reconciliation.ts` |
+| Event buffer (resync tail)                     | `lib/streaming/stream-debug.ts`                                            |

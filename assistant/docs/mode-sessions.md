@@ -1,9 +1,9 @@
 # Transcript mode sessions
 
 Mode sessions are compact, conversation-owned lifecycle records for grouping
-future computer-use, browser, Live vision, and Ambient transcript activity.
-This foundation stores timing and terminal truth. It does not activate a
-producer, stamp messages, alter model input, or change transcript rendering.
+computer-use, browser, Live vision, and reserved Ambient transcript activity.
+They connect runtime producers to immutable message membership while keeping
+model input and stored message content unchanged.
 
 ## API contract
 
@@ -58,6 +58,80 @@ look active.
 
 Runtime source generations and structural question associations are owned by
 the producer and message-membership integration. Those process-local facts are
-not reconstructed by this storage layer. Later integration must use a fresh
-session ID for mode work that resumes after restart and must reject callbacks
-from retired source generations.
+not reconstructed after restart. Resumed mode work uses a fresh session ID and
+callbacks from retired source generations are rejected.
+
+## Runtime ownership
+
+Each live `Conversation` owns one `ConversationModeSessionCoordinator`.
+Computer-use, browser, and camera producers activate a source with a stable
+source identity and guarded generation. The first accepted mode action claims
+the logical turn. The coordinator backfills rows already persisted for that
+turn, then stamps later user, assistant, and tool-result rows as they are
+inserted. A turn keeps its first owner when another mode acts inside it.
+
+Source eligibility and captured turn ownership end separately. Ending or
+resetting a source prevents future claims immediately, but a captured turn
+keeps its owner until its final output is persisted. Ordinary computer-use and
+browser sources finish when the turn settles. Camera sources use a source
+lifetime plus a synthetic run turn, so accepted frame writes and captured
+voice turns form a settlement barrier before terminal persistence. A camera
+epoch snapshots ownership before asynchronous frame persistence; stale epochs
+cannot join a later run.
+
+The coordinator stores only `active`, `completed`, or `interrupted`. Waiting
+and finishing are revisioned runtime hints. Terminal dispositions remain
+pending in memory until all captured turns release, then one idempotent
+compare-and-swap update records the terminal outcome. A successful turn with
+no explicit producer end also finalizes, allowing later work from the same
+resource generation to mint a new session.
+
+Regular reload, TTL, LRU, and memory-pressure eviction retain a conversation
+while it has an eligible mode source, captured owner, structural association,
+or unsettled terminal disposition. This preserves accepted camera output and
+exact structural continuation in the coordinator that admitted them. A long
+structural wait therefore remains resident until it is consumed, invalidated,
+or its source retires. Explicit conversation deletion and process shutdown
+keep their existing teardown semantics; startup recovery interrupts any
+durable active record left by process exit.
+
+## Structural continuation
+
+When an owned computer-use or browser turn ends on an existing question,
+confirmation, secret request, or blocking UI surface, the coordinator records
+that exact response identifier in memory and leaves the session active. Only
+the accepted response carrying the same kind and identifier can claim the
+continuation turn. Rejected, stale, unrelated, or cross-conversation responses
+cannot inherit ownership. Accepting or dismissing a surface consumes or
+invalidates its association. Ordinary prose and an idle reusable resource do
+not continue a session.
+
+Structural associations intentionally do not survive restart. Startup recovery
+terminalizes the old record, and a late response remains part of the existing
+interaction flow without reopening that record.
+
+## Transcript and synchronization
+
+`modeSession` is optional message metadata and is stripped from caller-supplied
+metadata. Membership is added only after a row insert succeeds. Text and
+thinking deltas carry no repeated ownership field; row-boundary events carry
+the current owner, and the normal conversation-messages invalidation refetches
+retrospective stamps.
+
+History returns one batched `modeSessions` descriptor list beside messages.
+The query resolves records for page members and accepts bounded explicit IDs
+for groups already loaded outside the newest page. Consolidation never crosses
+a stamped/unstamped or different-owner boundary. Same-owner folds retain row
+aliases and `modeSessionActivity.firstAt`/`lastAt`, so donor timestamps survive
+history compaction.
+
+Message deletion and retry paths recompute replaceable first/last display
+boundaries for every affected conversation session. They preserve status,
+terminal time, reason, and confirmed activity, and increment the revision.
+Deleting every owned row leaves the lifecycle record available for audit but
+produces no transcript container.
+
+All membership, lifecycle, boundary, and runtime-hint changes reuse the
+conversation-messages `sync_changed` tag. Clients merge descriptors by
+revision and refetch through the existing history reconciliation path. There
+is no separate session event stream or polling endpoint.

@@ -44,6 +44,7 @@ export interface ModeSessionSourceActivation {
   generation: number;
   mode: ModeSessionMode;
   sourceStartedAt: number;
+  lifetime?: "turn" | "source";
 }
 
 export interface ModeSessionStructuralResponse {
@@ -51,22 +52,30 @@ export interface ModeSessionStructuralResponse {
   responseId: string;
 }
 
+export interface ModeSessionTerminalDisposition {
+  status: "completed" | "interrupted";
+  endReason: string;
+}
+
 interface TrackedRow {
   id: string;
   at: number;
   stamped: boolean;
+  startsDisplayBoundary: boolean;
 }
 
 interface TurnState {
   owner?: ModeSession;
   rows: TrackedRow[];
   runtimeState?: "waiting" | "finishing";
+  terminalDisposition?: ModeSessionTerminalDisposition;
 }
 
 interface SourceState {
   generation: number;
   activation: number;
   session: ModeSession;
+  lifetime: "turn" | "source";
 }
 
 interface StructuralAssociation {
@@ -198,6 +207,10 @@ export class ConversationModeSessionCoordinator {
   readonly #sourceActivations = new Map<string, number>();
   readonly #turns = new Map<string, TurnState>();
   readonly #structuralAssociations = new Map<string, StructuralAssociation>();
+  readonly #retiredDispositions = new Map<
+    string,
+    ModeSessionTerminalDisposition
+  >();
 
   constructor(
     conversationId: string,
@@ -229,6 +242,7 @@ export class ConversationModeSessionCoordinator {
       generation: registration.generation,
       activation,
       session: { id: session.id, mode: session.mode },
+      lifetime: "turn",
     });
     return {
       sourceId: registration.sourceId,
@@ -266,14 +280,22 @@ export class ConversationModeSessionCoordinator {
     if (!result.ok || result.session.status !== "active") {
       return undefined;
     }
-    return this.registerSource({
+    const handle = this.registerSource({
       sourceId: activation.sourceId,
       generation: activation.generation,
       session: result.session,
     });
+    const registered = this.#sources.get(sourceKey(activation.sourceId));
+    if (registered) {
+      registered.lifetime = activation.lifetime ?? "turn";
+    }
+    return handle;
   }
 
-  retireSource(source: ModeSessionSourceReference): boolean {
+  retireSource(
+    source: ModeSessionSourceReference,
+    disposition?: ModeSessionTerminalDisposition,
+  ): boolean {
     const key = sourceKey(source.sourceId);
     const currentSource = this.#sources.get(key);
     if (
@@ -284,12 +306,26 @@ export class ConversationModeSessionCoordinator {
       return false;
     }
     this.#sources.delete(key);
+    if (disposition) {
+      this.#retiredDispositions.set(currentSource.session.id, disposition);
+      for (const turn of this.#turns.values()) {
+        if (turn.owner?.id === currentSource.session.id) {
+          turn.terminalDisposition = disposition;
+          turn.runtimeState = "finishing";
+        }
+      }
+    }
     const removedWait = this.#deleteAssociationsForOwner(
       currentSource.session.id,
     );
-    if (removedWait) {
+    if (removedWait && !disposition) {
       this.#clearRuntimeState(currentSource.session.id);
+    }
+    if (removedWait || disposition) {
       this.#publishRuntimeChange(currentSource.session.id);
+    }
+    if (disposition) {
+      this.#finalizeRetiredSessionIfSettled(currentSource.session.id);
     }
     return true;
   }
@@ -325,13 +361,23 @@ export class ConversationModeSessionCoordinator {
     return turn.owner;
   }
 
-  trackPersistedRow(turnId: string, messageId: string, at: number): void {
+  trackPersistedRow(
+    turnId: string,
+    messageId: string,
+    at: number,
+    options?: { startsDisplayBoundary?: boolean },
+  ): void {
     const turn = this.#turns.get(turnId) ?? { rows: [] };
     this.#turns.set(turnId, turn);
     if (turn.rows.some((row) => row.id === messageId)) {
       return;
     }
-    const row = { id: messageId, at, stamped: false };
+    const row = {
+      id: messageId,
+      at,
+      stamped: false,
+      startsDisplayBoundary: options?.startsDisplayBoundary ?? true,
+    };
     turn.rows.push(row);
     if (turn.owner) {
       const stamped = this.#stampRow(row, turn.owner);
@@ -377,6 +423,62 @@ export class ConversationModeSessionCoordinator {
 
   getTurnOwner(turnId: string): ModeSession | undefined {
     return this.#turns.get(turnId)?.owner;
+  }
+
+  /** True while eviction would discard live ownership or continuation state. */
+  hasResidentWork(): boolean {
+    if (
+      this.#sources.size > 0 ||
+      this.#structuralAssociations.size > 0 ||
+      this.#retiredDispositions.size > 0
+    ) {
+      return true;
+    }
+    for (const turn of this.#turns.values()) {
+      if (turn.owner) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  transferTurn(fromTurnId: string, toTurnId: string): ModeSession | undefined {
+    if (fromTurnId === toTurnId || this.#turns.has(toTurnId)) {
+      return this.#turns.get(toTurnId)?.owner;
+    }
+    const turn = this.#turns.get(fromTurnId);
+    if (!turn?.owner) {
+      return undefined;
+    }
+    this.#turns.delete(fromTurnId);
+    this.#turns.set(toTurnId, {
+      owner: turn.owner,
+      rows: [],
+      ...(turn.runtimeState ? { runtimeState: turn.runtimeState } : {}),
+      ...(turn.terminalDisposition
+        ? { terminalDisposition: turn.terminalDisposition }
+        : {}),
+    });
+    return turn.owner;
+  }
+
+  getTerminalDisposition(
+    turnId: string,
+  ): ModeSessionTerminalDisposition | undefined {
+    return this.#turns.get(turnId)?.terminalDisposition;
+  }
+
+  keepsSessionOpenAfterTurn(turnId: string): boolean {
+    const owner = this.#turns.get(turnId)?.owner;
+    if (!owner || this.#retiredDispositions.has(owner.id)) {
+      return false;
+    }
+    for (const source of this.#sources.values()) {
+      if (source.session.id === owner.id && source.lifetime === "source") {
+        return true;
+      }
+    }
+    return false;
   }
 
   recordActivity(turnId: string, at: number): boolean {
@@ -434,6 +536,21 @@ export class ConversationModeSessionCoordinator {
     return true;
   }
 
+  invalidateAllStructuralWaits(): number {
+    const ownerIds = new Set(
+      [...this.#structuralAssociations.values()].map(
+        (association) => association.owner.id,
+      ),
+    );
+    const count = this.#structuralAssociations.size;
+    this.#structuralAssociations.clear();
+    for (const ownerId of ownerIds) {
+      this.#clearRuntimeState(ownerId);
+      this.#publishRuntimeChange(ownerId);
+    }
+    return count;
+  }
+
   beginDraining(turnId: string): boolean {
     const turn = this.#turns.get(turnId);
     if (!turn?.owner || !this.#readActiveSession(turn.owner.id)) {
@@ -474,13 +591,18 @@ export class ConversationModeSessionCoordinator {
       this.#turns.delete(input.turnId);
       this.#deleteAssociationsForOwner(turn.owner.id);
       this.#retireSourcesForOwner(turn.owner.id);
+      this.#retiredDispositions.delete(turn.owner.id);
       this.#dependencies.publishMessagesChanged(this.#conversationId);
     }
     return finalized;
   }
 
   releaseTurn(turnId: string): void {
+    const owner = this.#turns.get(turnId)?.owner;
     this.#turns.delete(turnId);
+    if (owner) {
+      this.#finalizeRetiredSessionIfSettled(owner.id);
+    }
   }
 
   descriptorFor(sessionId: string): ModeSessionDescriptor | undefined {
@@ -597,22 +719,29 @@ export class ConversationModeSessionCoordinator {
       return false;
     }
     return this.#mutateActiveSession(owner.id, (session) => {
-      const earliest = rows.reduce((current, row) =>
-        row.at < current.at ? row : current,
+      const eligibleFirstRows =
+        owner.mode === "live_vision" || owner.mode === "ambient"
+          ? rows
+          : rows.filter((row) => row.startsDisplayBoundary);
+      const earliest = eligibleFirstRows.reduce<TrackedRow | undefined>(
+        (current, row) => (!current || row.at < current.at ? row : current),
+        undefined,
       );
       const firstIncluded =
         session.firstIncludedAt !== null &&
         session.firstIncludedMessageId !== null &&
-        session.firstIncludedAt <= earliest.at
+        (!earliest || session.firstIncludedAt <= earliest.at)
           ? {
               at: session.firstIncludedAt,
               messageId: session.firstIncludedMessageId,
             }
-          : { at: earliest.at, messageId: earliest.id };
+          : earliest
+            ? { at: earliest.at, messageId: earliest.id }
+            : null;
       const lastOwnedMessageId = rows.at(-1)?.id ?? session.lastOwnedMessageId;
       if (
-        session.firstIncludedAt === firstIncluded.at &&
-        session.firstIncludedMessageId === firstIncluded.messageId &&
+        session.firstIncludedAt === (firstIncluded?.at ?? null) &&
+        session.firstIncludedMessageId === (firstIncluded?.messageId ?? null) &&
         session.lastOwnedMessageId === lastOwnedMessageId
       ) {
         return { ok: true, session };
@@ -661,6 +790,35 @@ export class ConversationModeSessionCoordinator {
         this.#sources.delete(key);
       }
     }
+  }
+
+  #finalizeRetiredSessionIfSettled(sessionId: string): boolean {
+    const disposition = this.#retiredDispositions.get(sessionId);
+    if (!disposition) {
+      return false;
+    }
+    for (const turn of this.#turns.values()) {
+      if (turn.owner?.id === sessionId) {
+        return false;
+      }
+    }
+    const endedAt = Date.now();
+    const finalized = this.#mutateActiveSession(sessionId, (session) =>
+      this.#dependencies.finalize({
+        id: session.id,
+        conversationId: this.#conversationId,
+        expectedRevision: session.revision,
+        status: disposition.status,
+        endedAt,
+        endReason: disposition.endReason,
+        lastActivityAt: endedAt,
+      }),
+    );
+    if (finalized) {
+      this.#retiredDispositions.delete(sessionId);
+      this.#dependencies.publishMessagesChanged(this.#conversationId);
+    }
+    return finalized;
   }
 
   #hasAssociationForOwner(sessionId: string): boolean {

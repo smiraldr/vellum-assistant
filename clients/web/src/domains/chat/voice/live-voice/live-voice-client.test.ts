@@ -590,6 +590,46 @@ describe("server frame dispatch", () => {
     });
   });
 
+  test("negotiates and sends camera lifecycle frames", async () => {
+    const { client, ws } = await ready({ sightSessions: true });
+
+    expect(client.sightStart(7, "live")).toBe(true);
+    expect(
+      client.sightFrame("att-1", undefined, {
+        cameraEpoch: 7,
+        source: "live",
+      }),
+    ).toBe(true);
+    expect(client.sightEnd(7)).toBe(true);
+    expect(ws.sentJson.slice(-3)).toEqual([
+      { type: "sight_start", cameraEpoch: 7, source: "live" },
+      {
+        type: "sight_frame",
+        attachmentId: "att-1",
+        cameraEpoch: 7,
+        source: "live",
+      },
+      { type: "sight_end", cameraEpoch: 7 },
+    ]);
+  });
+
+  test("keeps the legacy frame shape when lifecycle is not negotiated", async () => {
+    const { client, ws } = await ready();
+
+    expect(client.sightStart(7, "live")).toBe(false);
+    expect(
+      client.sightFrame("att-1", undefined, {
+        cameraEpoch: 7,
+        source: "live",
+      }),
+    ).toBe(true);
+    expect(client.sightEnd(7)).toBe(false);
+    expect(ws.sentJson.at(-1)).toEqual({
+      type: "sight_frame",
+      attachmentId: "att-1",
+    });
+  });
+
   test("a rejected sight_frame is a routine drop, not a settings or session error", async () => {
     // The daemon reclaims the attachment on the path that sends this, so there
     // is nothing to retry and nothing to give back. What matters is where the

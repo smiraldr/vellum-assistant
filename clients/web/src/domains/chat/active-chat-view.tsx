@@ -85,6 +85,7 @@ import { usePendingDeepLinkStore } from "@/stores/pending-deep-link-store";
 
 import { ChatContentLayout } from "@/domains/chat/components/chat-content-layout";
 import type { ChatMainPanelProps } from "@/domains/chat/components/chat-route-content";
+import { useSessionDisclosureState } from "@/domains/chat/transcript/use-session-disclosure-state";
 
 /**
  * Stage a `?prompt=` that arrived without in-app provenance (a clicked link)
@@ -128,6 +129,8 @@ export function ActiveChatView() {
   // Zustand store selectors
   // -------------------------------------------------------------------------
   const activeConversationId = useConversationStore.use.activeConversationId();
+  const sessionDisclosureState =
+    useSessionDisclosureState(activeConversationId);
   const isTokenDialogOpen = useDeployStore.use.isTokenDialogOpen();
   const complexDeployApp = useDeployStore.use.complexDeployApp();
 
@@ -297,6 +300,7 @@ export function ActiveChatView() {
       historyResult.pagination.latestPageOldestTimestamp,
     reachability,
     setAssetsRefreshKey,
+    observeLiveModeSession: sessionDisclosureState.observeLiveSession,
   });
 
   // -------------------------------------------------------------------------
@@ -631,6 +635,7 @@ export function ActiveChatView() {
 
     // History pagination
     historyPagination: historyResult.pagination,
+    sessionDisclosureState,
 
     // Disk pressure (single instance — avoids duplicate polling/subscriptions)
     diskPressure,

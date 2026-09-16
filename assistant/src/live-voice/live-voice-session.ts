@@ -56,6 +56,10 @@ import {
   VoiceFrontModelConfigSchema,
 } from "../config/schemas/voice.js";
 import { ABORT_WATCHDOG_MS } from "../daemon/abort-watchdog.js";
+import type {
+  ConversationModeSessionCoordinator,
+  ModeSessionSourceHandle,
+} from "../daemon/conversation-mode-session.js";
 import { isRefusedInReadOnlyPass } from "../daemon/conversation-tool-setup.js";
 import type { TrustContext } from "../daemon/trust-context-types.js";
 import {
@@ -116,6 +120,7 @@ import {
   dismissesUiSurface,
   revealsUiSurface,
 } from "./activity-label.js";
+import { CameraModeSessionProducer } from "./camera-mode-session.js";
 import {
   buildDuplexContinuationLabel,
   createContinuationLabeler,
@@ -364,6 +369,16 @@ export interface LiveVoiceSessionOptions {
    */
   resolveCredentialReadiness?: LiveVoiceCredentialReadinessResolver | null;
   startVoiceTurn?: LiveVoiceTurnStarter;
+  resolveModeSessions?: (
+    conversationId: string,
+  ) => ConversationModeSessionCoordinator | undefined;
+  prepareModeSessions?: (
+    conversationId: string,
+  ) => Promise<ConversationModeSessionCoordinator | undefined>;
+  acquireModeSessionResidency?: (conversationId: string) => Promise<{
+    coordinator: ConversationModeSessionCoordinator;
+    release: () => void;
+  }>;
   streamTtsAudio?: LiveVoiceTtsStreamer | null;
   archiveAudio?: LiveVoiceSessionAudioArchiver | null;
   emitMetrics?: boolean;
@@ -635,6 +650,9 @@ interface ActiveAssistantTurn {
   language: string | undefined;
   abortController: AbortController;
   handle: VoiceTurnHandle | null;
+  modeSessionSource: ModeSessionSourceHandle | undefined;
+  modeSessionRequestIds: string[];
+  modeSessionDeliveryTurnId: string | null;
   // When the turn launched, for narration's turnElapsedMs.
   launchedAtMs: number;
   // Tool-activity log and spoken progress narration for the turn
@@ -1187,6 +1205,21 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
   private readonly metrics: LiveVoiceMetricsCollector;
   private readonly createTurnId: () => string;
   private readonly conversationId: string;
+  private readonly resolveModeSessions?: (
+    conversationId: string,
+  ) => ConversationModeSessionCoordinator | undefined;
+  private readonly prepareModeSessions?: (
+    conversationId: string,
+  ) => Promise<ConversationModeSessionCoordinator | undefined>;
+  private readonly acquireModeSessionResidency?: (
+    conversationId: string,
+  ) => Promise<{
+    coordinator: ConversationModeSessionCoordinator;
+    release: () => void;
+  }>;
+  private releaseModeSessionResidency?: () => void;
+  private cameraModeSessions?: CameraModeSessionProducer;
+  private sightFrameSequence: Promise<void> = Promise.resolve();
   /**
    * Mirrors phase changes to the iOS Live Activity through the platform, for
    * the case the client cannot cover: an app backgrounded long enough for iOS
@@ -1406,6 +1439,7 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
   private readonly finalizeGraceMs: number;
   // Rotates through the progress fallback phrases across the session's turns.
   private progressPhraseCounter = 0;
+  private modeSessionDeliveryCounter = 0;
   // Progress-only phrasing service. It never makes routing decisions and
   // never emits an answer.
   private readonly progressNarrator: VoiceProgressNarrator | null;
@@ -1493,6 +1527,9 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
     this.createTurnId = options.createTurnId ?? randomUUID;
     this.conversationId =
       context.startFrame.conversationId ?? context.sessionId;
+    this.resolveModeSessions = options.resolveModeSessions;
+    this.prepareModeSessions = options.prepareModeSessions;
+    this.acquireModeSessionResidency = options.acquireModeSessionResidency;
     this.liveActivityReporter =
       options.liveActivityReporter ??
       new LiveActivityReporter(this.conversationId);
@@ -1622,6 +1659,11 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       // is a property of the daemon and not of what this client asked for.
       // A client reading it back absent is talking to one that predates it.
       textInput: true,
+      ...(this.resolveModeSessions ||
+      this.prepareModeSessions ||
+      this.acquireModeSessionResidency
+        ? { sightSessions: true }
+        : {}),
       ...(this.audioInput ? {} : { audioInput: false }),
     });
   }
@@ -1654,13 +1696,48 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       case "attach_frame":
         this.parkTurnFrame(frame);
         return;
+      case "sight_start":
+        await this.sequenceSightFrame(frame);
+        return;
+      case "sight_end":
+        await this.sequenceSightFrame(frame);
+        return;
       case "sight_frame":
-        this.persistSightFrame(frame);
+        await this.sequenceSightFrame(frame);
         return;
       case "text":
         await this.handleTextTurn(frame);
         return;
     }
+  }
+
+  private sequenceSightFrame(
+    frame: Extract<
+      LiveVoiceClientFrame,
+      { type: "sight_start" | "sight_end" | "sight_frame" }
+    >,
+  ): Promise<void> {
+    const operation = this.sightFrameSequence.then(async () => {
+      if (this.isClosed || this.state === "failed") {
+        if (frame.type === "sight_frame") {
+          this.reclaimParkedFrame(frame.attachmentId);
+        }
+        return;
+      }
+      switch (frame.type) {
+        case "sight_start":
+          await this.startSightSession(frame.cameraEpoch, frame.source);
+          return;
+        case "sight_end":
+          this.endSightSession(frame.cameraEpoch);
+          return;
+        case "sight_frame":
+          this.persistSightFrame(frame);
+          return;
+      }
+    });
+    this.sightFrameSequence = operation.catch(() => {});
+    return operation;
   }
 
   /**
@@ -1769,6 +1846,24 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
    */
   private persistSightFrame(frame: LiveVoiceClientSightFrameFrame): void {
     const receivedAtMs = Date.now();
+    const cameraToken =
+      frame.cameraEpoch === undefined
+        ? undefined
+        : this.cameraModeSessions?.beginFrame(frame.cameraEpoch, frame.source);
+    if (frame.cameraEpoch !== undefined && !cameraToken) {
+      deleteOrphanAttachments([frame.attachmentId]);
+      if (!this.isClosed) {
+        void this.sendFrame({
+          type: "error",
+          code: LiveVoiceProtocolErrorCode.InvalidFrame,
+          message: "That camera run is no longer active.",
+          frameType: "sight_frame",
+          attachmentId: frame.attachmentId,
+          recoverable: true,
+        });
+      }
+      return;
+    }
     // One line per keep, written when the row lands, carrying the whole
     // timeline: the client leg the frame reported, the daemon leg the persist
     // measured, and the distance from the speech onset the frame may have
@@ -1782,7 +1877,23 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       this.conversationId,
       frame.attachmentId,
       "voice",
+      undefined,
+      undefined,
+      cameraToken?.owner,
     ).then((result) => {
+      try {
+        this.cameraModeSessions?.finishFrame(
+          cameraToken,
+          result.ok && result.messageId
+            ? { messageId: result.messageId, at: receivedAtMs }
+            : undefined,
+        );
+      } catch (err) {
+        log.warn(
+          { err, attachmentId: frame.attachmentId },
+          "Could not record camera session ownership",
+        );
+      }
       log.info(
         {
           attachmentId: frame.attachmentId,
@@ -1816,6 +1927,74 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
         });
       }
     });
+  }
+
+  private async startSightSession(
+    cameraEpoch: number,
+    source: "live" | "ambient" | undefined,
+  ): Promise<void> {
+    if (!this.cameraModeSessions) {
+      let coordinator = this.resolveModeSessions?.(this.conversationId);
+      let releaseResidency: (() => void) | undefined;
+      if (!coordinator && this.acquireModeSessionResidency) {
+        try {
+          const residency = await this.acquireModeSessionResidency(
+            this.conversationId,
+          );
+          if (this.isClosed || this.state === "failed") {
+            residency.release();
+            return;
+          }
+          coordinator = residency.coordinator;
+          releaseResidency = residency.release;
+        } catch (err) {
+          log.warn({ err, cameraEpoch }, "Could not prepare camera session");
+        }
+      }
+      if (!coordinator && this.prepareModeSessions) {
+        try {
+          coordinator = await this.prepareModeSessions(this.conversationId);
+        } catch (err) {
+          log.warn({ err, cameraEpoch }, "Could not prepare camera session");
+        }
+      }
+      if (this.isClosed || this.state === "failed") {
+        return;
+      }
+      if (coordinator) {
+        this.cameraModeSessions = new CameraModeSessionProducer(
+          coordinator,
+          this.context.sessionId,
+        );
+        this.releaseModeSessionResidency = releaseResidency;
+      } else {
+        releaseResidency?.();
+      }
+    }
+    let handle: ModeSessionSourceHandle | undefined;
+    try {
+      handle = this.cameraModeSessions?.start(cameraEpoch, source ?? "live");
+    } catch (err) {
+      log.warn({ err, cameraEpoch }, "Could not start camera session");
+    }
+    if (handle || this.isClosed) {
+      return;
+    }
+    void this.sendFrame({
+      type: "error",
+      code: LiveVoiceProtocolErrorCode.InvalidFrame,
+      message: "Could not start that camera run.",
+      frameType: "sight_start",
+      recoverable: true,
+    });
+  }
+
+  private endSightSession(cameraEpoch: number): void {
+    try {
+      this.cameraModeSessions?.end(cameraEpoch);
+    } catch (err) {
+      log.warn({ err, cameraEpoch }, "Could not end camera session");
+    }
   }
 
   /**
@@ -1936,6 +2115,18 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
     if (this.isClosed) {
       return;
     }
+
+    try {
+      this.cameraModeSessions?.close(
+        reason === "client_end"
+          ? { status: "completed", endReason: "camera_session_ended" }
+          : { status: "interrupted", endReason: `camera_${reason}` },
+      );
+    } catch (err) {
+      log.warn({ err, reason }, "Could not close camera session");
+    }
+    this.releaseModeSessionResidency?.();
+    this.releaseModeSessionResidency = undefined;
 
     // Recorded first, and independently of `shouldEmitSessionEndMetrics`
     // below: that flag governs the client-facing `metrics` frame, and a
@@ -4737,6 +4928,8 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       this.activeAssistantTurn = null;
     }
     this.clearFillerTimers(turn);
+    this.releaseModeSessionRequests(turn);
+    this.releaseModeSessionDelivery(turn);
     turn.abortController.abort(
       createAbortReason("voice_session_aborted", `live-voice-${reason}`),
     );
@@ -5652,6 +5845,23 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
         : null;
     const token = Symbol("live-voice-assistant-turn");
     const turnId = this.ensureTurnId(utterance);
+    const initialLeg = opts?.initialLeg ?? "front-door";
+    const modeSessionRequestId = randomUUID();
+    const modeSessionSource =
+      this.cameraModeSessions?.holdDelivery(modeSessionRequestId);
+    const modeSessionRequestIds = modeSessionSource
+      ? [modeSessionRequestId]
+      : [];
+    if (modeSessionSource && initialLeg === "front-door") {
+      const escalatedRequestId = randomUUID();
+      if (this.cameraModeSessions?.holdDelivery(escalatedRequestId)) {
+        modeSessionRequestIds.push(escalatedRequestId);
+      }
+    }
+    const modeSessionDeliveryTurnId = `live-voice-delivery:${this.context.sessionId}:${++this.modeSessionDeliveryCounter}`;
+    if (modeSessionSource) {
+      this.cameraModeSessions?.holdDelivery(modeSessionDeliveryTurnId);
+    }
     this.startMetricsTurnIfNeeded(utterance, turnId);
     this.markAssistantDispatch(utterance, turnId);
     const abortController = new AbortController();
@@ -5671,6 +5881,11 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       language: this.turnLanguageFor(utterance),
       abortController,
       handle: null,
+      modeSessionSource,
+      modeSessionRequestIds,
+      modeSessionDeliveryTurnId: modeSessionSource
+        ? modeSessionDeliveryTurnId
+        : null,
       launchedAtMs: Date.now(),
       progress: createProgressCadence({
         config: progressConfigForCadence(
@@ -5763,6 +5978,8 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
     if (!opts?.speculative) {
       await this.sendFrame({ type: "thinking", turnId });
       if (!this.isActiveAssistantTurn(token)) {
+        this.releaseModeSessionRequests(activeTurn);
+        this.releaseModeSessionDelivery(activeTurn);
         this.restorePendingTurnContext(activeTurn);
         // Nothing was persisted, so a frame the restore could not hand back
         // links to no row and is collectible right here.
@@ -5805,7 +6022,6 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       activeTurn.progress.arm();
     }
 
-    const initialLeg = opts?.initialLeg ?? "front-door";
     const started = await this.startAssistantLeg(activeTurn, {
       content,
       routingLeg: initialLeg,
@@ -5819,6 +6035,8 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
         : {}),
     });
     if (!started) {
+      this.releaseModeSessionRequests(activeTurn);
+      this.releaseModeSessionDelivery(activeTurn);
       // Nothing was persisted or spoken, so the context this turn consumed goes
       // back to the session rather than dying with the failed dispatch. A frame
       // a newer one displaced meanwhile links to no row, so it is collected
@@ -5865,6 +6083,7 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       return false;
     }
     const { token, utterance, turnId } = activeTurn;
+    const modeSessionRequestId = activeTurn.modeSessionRequestIds.shift();
 
     // `rawText` accumulates this leg's spoken stream. A front-door leg runs
     // through the shared coordinator, which reads its stream through the
@@ -5969,6 +6188,14 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       const handle = await this.startVoiceTurn({
         conversationId: this.conversationId,
         voiceSessionId: this.context.sessionId,
+        ...(activeTurn.modeSessionSource && modeSessionRequestId
+          ? {
+              preacceptedModeSession: {
+                requestId: modeSessionRequestId,
+                source: activeTurn.modeSessionSource,
+              },
+            }
+          : {}),
         ...(activeTurn.hiddenPrompt ? { hiddenSyntheticPrompt: true } : {}),
         userMessageChannel: "vellum",
         assistantMessageChannel: "vellum",
@@ -6281,7 +6508,6 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
           })();
         },
       });
-
       const current = this.activeAssistantTurn;
       if (current?.token !== token) {
         // A discard that beat this handle's resolution still owes the
@@ -6326,6 +6552,9 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       current.handle = handle;
       return true;
     } catch (err) {
+      if (modeSessionRequestId) {
+        this.cameraModeSessions?.releaseDelivery(modeSessionRequestId);
+      }
       if (!this.isActiveAssistantTurn(token)) {
         return false;
       }
@@ -6338,6 +6567,8 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
         this.rearmForegroundTaskAfterLegFailure(activeTurn);
       this.clearFillerTimers(activeTurn);
       this.clearActiveAssistantTurn(token);
+      this.releaseModeSessionRequests(activeTurn);
+      this.releaseModeSessionDelivery(activeTurn);
       if (foregroundTaskResumeRearmed) {
         this.scheduleForegroundTaskResume();
       }
@@ -6643,6 +6874,9 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
         if (!currentTurn.abortController.signal.aborted) {
           this.scheduleRearmAfterTurn();
         }
+      })
+      .finally(() => {
+        this.releaseModeSessionDelivery(activeTurn);
       });
   }
 
@@ -7169,6 +7403,11 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
         : {}),
     });
     await this.finishMetricsTurn(turn.utterance, status, reason, turn.turnId);
+    this.releaseModeSessionRequests(turn);
+
+    if (status === "cancelled") {
+      this.releaseModeSessionDelivery(turn);
+    }
 
     if (
       (options.clearActive ?? true) &&
@@ -7180,6 +7419,21 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
 
     if (options.rearm ?? true) {
       this.scheduleRearmAfterTurn();
+    }
+  }
+
+  private releaseModeSessionDelivery(turn: ActiveAssistantTurn): void {
+    const turnId = turn.modeSessionDeliveryTurnId;
+    if (turnId === null) {
+      return;
+    }
+    turn.modeSessionDeliveryTurnId = null;
+    this.cameraModeSessions?.releaseDelivery(turnId);
+  }
+
+  private releaseModeSessionRequests(turn: ActiveAssistantTurn): void {
+    for (const turnId of turn.modeSessionRequestIds.splice(0)) {
+      this.cameraModeSessions?.releaseDelivery(turnId);
     }
   }
 

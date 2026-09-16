@@ -41,6 +41,7 @@ export interface GroupSessionItemsInput {
   getModeSession: (message: DisplayMessage) => ModeSession | null | undefined;
   getActivityBounds?: (message: DisplayMessage) => SessionMemberActivityBounds;
   previousSegments?: readonly SessionGroupSegment[];
+  claimedPreviousKeys?: Set<string>;
 }
 
 interface EligibleMessageItem {
@@ -191,7 +192,7 @@ export function groupSessionItems(
   input: GroupSessionItemsInput,
 ): SessionGroupedTranscriptItem[] {
   const grouped: SessionGroupedTranscriptItem[] = [];
-  const claimedPreviousKeys = new Set<string>();
+  const claimedPreviousKeys = input.claimedPreviousKeys ?? new Set<string>();
   let pending: EligibleMessageItem[] = [];
 
   function flush(): void {

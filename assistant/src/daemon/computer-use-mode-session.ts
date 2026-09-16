@@ -54,6 +54,10 @@ export class ComputerUseModeSessionProducer {
   endTask(input: {
     turnId?: string;
     source: ComputerUseSourceIdentity;
+    disposition?: {
+      status: "completed" | "interrupted";
+      endReason: string;
+    };
   }): boolean {
     const handle = this.#activeHandle;
     if (
@@ -65,7 +69,13 @@ export class ComputerUseModeSessionProducer {
     }
 
     this.#activeHandle = undefined;
-    const retired = this.#coordinator.retireSource(handle);
+    const retired = this.#coordinator.retireSource(
+      handle,
+      input.disposition ?? {
+        status: "completed",
+        endReason: "computer_use_ended",
+      },
+    );
     if (
       input.turnId &&
       this.#coordinator.getTurnOwner(input.turnId)?.id === handle.id

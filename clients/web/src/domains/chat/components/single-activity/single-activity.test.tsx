@@ -221,6 +221,39 @@ describe("SingleActivity — thinking variant", () => {
 });
 
 describe("SingleActivity — tool variant", () => {
+  test("uses localized action wording without exposing the raw action", () => {
+    const { getByText, queryByText } = render(
+      <SingleActivity
+        variant="tool"
+        toolCall={makeToolCall({
+          name: "computer",
+          input: { action: "screenshot" },
+        })}
+      />,
+    );
+
+    expect(getByText("Observing")).toBeTruthy();
+    expect(queryByText("screenshot")).toBeNull();
+  });
+
+  test("keeps supplied activity ahead of localized action wording", () => {
+    const { getByText, queryByText } = render(
+      <SingleActivity
+        variant="tool"
+        toolCall={makeToolCall({
+          name: "host_bash",
+          input: {
+            command: "assistant browser click #submit",
+            activity: "Submitting the form",
+          },
+        })}
+      />,
+    );
+
+    expect(getByText("Submitting the form")).toBeTruthy();
+    expect(queryByText("Clicking")).toBeNull();
+  });
+
   test("renders the derived label and chevron — no leading glyph, no risk badge", () => {
     const { getByTestId, getByText, queryByTestId, container } = render(
       <SingleActivity variant="tool" toolCall={makeToolCall()} />,

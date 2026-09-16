@@ -1202,7 +1202,7 @@ async function reserveInflightMessageRow(
   conversationId: string,
   role: "assistant" | "user",
   metadata: Record<string, unknown> | undefined,
-): Promise<{ id: string }> {
+): Promise<{ id: string; createdAt: number }> {
   const writer = createInflightContentWriter(conversationId);
   const reserved = await reserveMessage(
     conversationId,
@@ -1641,7 +1641,11 @@ export async function handleLlmCallStarted(
     }
   }
 
-  const metadata = buildAssistantChannelMetadata(state, deps);
+  const modeSession = deps.ctx.modeSessions.getTurnOwner(deps.reqId);
+  const metadata = {
+    ...buildAssistantChannelMetadata(state, deps),
+    ...(modeSession ? { modeSession } : {}),
+  };
   const reservedRow = await reserveInflightMessageRow(
     state,
     deps.ctx.conversationId,
@@ -1649,6 +1653,11 @@ export async function handleLlmCallStarted(
     metadata,
   );
   state.lastAssistantMessageId = reservedRow.id;
+  deps.ctx.modeSessions.trackPersistedRow(
+    deps.reqId,
+    reservedRow.id,
+    reservedRow.createdAt,
+  );
   state.assistantRowAwaitingFinalization = true;
   // Fresh row → fresh accumulator. If an earlier (failed) LLM call
   // within the same run left partial state behind, the
@@ -1660,6 +1669,7 @@ export async function handleLlmCallStarted(
     type: "assistant_turn_start",
     messageId: reservedRow.id,
     conversationId: deps.ctx.conversationId,
+    ...(modeSession ? { modeSession } : {}),
   });
 }
 
@@ -1878,6 +1888,7 @@ export function handleToolUse(
     // Carry the first-byte timestamp through so a client that connected after
     // the preview event still anchors the perceived-latency timer to it.
     previewStartedAt: state.toolPreviewStartedAt.get(event.id),
+    modeSession: deps.ctx.modeSessions.getTurnOwner(deps.reqId),
   });
   // `message_complete` always precedes tool events (see handleMessageComplete),
   // so this tool_use block is already durable in the assistant row. The
@@ -2149,6 +2160,7 @@ function buildToolResultBlocks(
 function buildToolResultMetadata(
   deps: EventHandlerDeps,
 ): Record<string, unknown> {
+  const modeSession = deps.ctx.modeSessions.getTurnOwner(deps.reqId);
   return {
     ...provenanceFromTrustContext(turnOrRestingTrust(deps.ctx)),
     userMessageChannel: deps.turnChannelContext.userMessageChannel,
@@ -2156,6 +2168,7 @@ function buildToolResultMetadata(
     userMessageInterface: deps.turnInterfaceContext.userMessageInterface,
     assistantMessageInterface:
       deps.turnInterfaceContext.assistantMessageInterface,
+    ...(modeSession ? { modeSession } : {}),
   };
 }
 
@@ -2212,6 +2225,12 @@ async function persistPendingToolResultRow(
     deps.ctx.conversationId,
     buildToolResultMetadata(deps),
   );
+  const row = getMessageById(rowId, deps.ctx.conversationId);
+  if (row) {
+    deps.ctx.modeSessions.trackPersistedRow(deps.reqId, rowId, row.createdAt, {
+      startsDisplayBoundary: false,
+    });
+  }
   // Snapshot the batch after the reservation resolves so the last of the
   // concurrent writers reflects the fullest batch. On-arrival writes go to
   // the in-flight delta file; the finalize seam folds the row inline.
@@ -2250,7 +2269,7 @@ export async function finalizePendingToolResultRow(
   conversationId: string,
   metadata: Record<string, unknown>,
   rlog: pino.Logger,
-): Promise<void> {
+): Promise<string | undefined> {
   if (state.pendingToolResults.size === 0) {
     return;
   }
@@ -2377,6 +2396,7 @@ export async function finalizePendingToolResultRow(
   }
   state.pendingToolResults.clear();
   state.pendingToolResultRowReservation = undefined;
+  return rowId;
 }
 
 export async function handleToolResult(
@@ -2484,6 +2504,7 @@ export async function handleToolResult(
       conversationId: deps.ctx.conversationId,
       messageId: state.lastAssistantMessageId,
       toolUseId: event.toolUseId,
+      modeSession: deps.ctx.modeSessions.getTurnOwner(deps.reqId),
     });
     // Capture the seq synchronously (before the persist await) so it reflects
     // the just-stamped tool_result event, then persist on arrival. A failure
@@ -2677,6 +2698,7 @@ export async function handleToolResult(
     answeredQuestion: event.answeredQuestion,
     errorCode: event.errorCode,
     completedAt,
+    modeSession: deps.ctx.modeSessions.getTurnOwner(deps.reqId),
   });
 
   // Capture the seq synchronously (before the persist await) so it reflects the
@@ -3164,12 +3186,26 @@ export async function handleMessageComplete(
   // row as it arrived (`persistPendingToolResultRow`); this rewrites it to the
   // full batch (covering the case where a mid-arrival write failed), indexes it
   // for memory recall, and clears the batch state.
-  await finalizePendingToolResultRow(
+  const toolResultRowId = await finalizePendingToolResultRow(
     state,
     deps.ctx.conversationId,
     buildToolResultMetadata(deps),
     deps.rlog,
   );
+  if (toolResultRowId) {
+    const toolResultRow = getMessageById(
+      toolResultRowId,
+      deps.ctx.conversationId,
+    );
+    if (toolResultRow) {
+      deps.ctx.modeSessions.trackPersistedRow(
+        deps.reqId,
+        toolResultRowId,
+        toolResultRow.createdAt,
+        { startsDisplayBoundary: false },
+      );
+    }
+  }
 
   // Accumulate directives + warnings from the assistant content for
   // downstream attachment processing. `cleanAssistantContent` is also

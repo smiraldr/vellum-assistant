@@ -8,6 +8,7 @@ interface SessionDisclosureVisitState {
 
 export interface SessionDisclosureState {
   isSessionOpen: (sessionId: string) => boolean;
+  isSessionExplicitlyClosed?: (sessionId: string) => boolean;
   observeLiveSession: (sessionId: string) => void;
   setSessionOpen: (sessionId: string, open: boolean) => void;
 }
@@ -96,5 +97,17 @@ export function useSessionDisclosureState(
     [conversationId, visit],
   );
 
-  return { isSessionOpen, observeLiveSession, setSessionOpen };
+  const isSessionExplicitlyClosed = useCallback(
+    (sessionId: string): boolean =>
+      visit.conversationId === conversationId &&
+      visit.explicitChoices.get(sessionId) === false,
+    [conversationId, visit],
+  );
+
+  return {
+    isSessionOpen,
+    isSessionExplicitlyClosed,
+    observeLiveSession,
+    setSessionOpen,
+  };
 }

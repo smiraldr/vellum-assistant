@@ -1,4 +1,10 @@
-import { type ReactNode, useCallback, useLayoutEffect, useRef } from "react";
+import {
+  type ReactNode,
+  type RefCallback,
+  useCallback,
+  useLayoutEffect,
+  useRef,
+} from "react";
 import {
   Camera,
   ChevronRight,
@@ -14,7 +20,7 @@ import { cn } from "@/utils/misc";
 
 import {
   describeSessionGroupSummary,
-  isActiveSessionGroupState,
+  shouldPulseSessionGroupState,
   type SessionGroupSummaryDescriptor,
   type SessionGroupSummaryInput,
 } from "./session-group-summary";
@@ -22,10 +28,7 @@ import {
 const SESSION_VALUE = "session";
 
 export type SessionGroupMode =
-  | "computerUse"
-  | "browser"
-  | "liveVision"
-  | "ambient";
+  "computerUse" | "browser" | "liveVision" | "ambient";
 
 const MODE_ICONS: Record<SessionGroupMode, LucideIcon> = {
   computerUse: Monitor,
@@ -63,6 +66,7 @@ export interface SessionGroupRowProps {
   onOpenChange: (open: boolean) => void;
   /** Keeps the reply subtree mounted while its grouping header arrives. */
   headerVisible?: boolean;
+  headerRef?: RefCallback<HTMLButtonElement>;
   children: ReactNode;
 }
 
@@ -94,9 +98,7 @@ function formatSummary(
       ? null
       : formatDuration(descriptor.durationSeconds, t);
   const endTime =
-    descriptor.endedAt === null
-      ? null
-      : formatTime(descriptor.endedAt, locale);
+    descriptor.endedAt === null ? null : formatTime(descriptor.endedAt, locale);
   const lastActivityTime =
     descriptor.lastActivityAt === null
       ? null
@@ -150,6 +152,20 @@ function formatSummary(
       }
       return t("sessionGroupRow.interrupted");
     }
+    case "disconnected": {
+      if (duration !== null && lastActivityTime !== null) {
+        return t("sessionGroupRow.disconnectedWithDurationAndLastActivity", {
+          duration,
+          lastActivityTime,
+        });
+      }
+      if (lastActivityTime !== null) {
+        return t("sessionGroupRow.disconnectedWithLastActivity", {
+          lastActivityTime,
+        });
+      }
+      return t("sessionGroupRow.disconnected");
+    }
     case "unavailable":
       return t("sessionGroupRow.timingUnavailable");
   }
@@ -166,6 +182,7 @@ export function SessionGroupRow({
   open,
   onOpenChange,
   headerVisible = true,
+  headerRef,
   children,
 }: SessionGroupRowProps) {
   const { t, i18n } = useTranslation("chat");
@@ -178,6 +195,13 @@ export function SessionGroupRow({
     descriptor,
     t,
     i18n.resolvedLanguage ?? i18n.language,
+  );
+  const setTriggerRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      triggerRef.current = node;
+      headerRef?.(node);
+    },
+    [headerRef],
   );
 
   const focusTriggerFromContent = useCallback(() => {
@@ -215,7 +239,7 @@ export function SessionGroupRow({
     >
       <Collapsible.Item value={SESSION_VALUE}>
         <Collapsible.Trigger
-          ref={triggerRef}
+          ref={setTriggerRef}
           hidden={!headerVisible}
           disabled={!headerVisible}
           aria-hidden={!headerVisible}
@@ -240,7 +264,7 @@ export function SessionGroupRow({
               >
                 {title}
               </Typography>
-              {isActiveSessionGroupState(descriptor.state) ? (
+              {shouldPulseSessionGroupState(descriptor.state) ? (
                 <span
                   aria-hidden
                   data-testid="session-group-live-indicator"

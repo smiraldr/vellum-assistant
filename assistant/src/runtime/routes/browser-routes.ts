@@ -11,7 +11,10 @@
 
 import { z } from "zod";
 
-import { executeBrowserOperation } from "../../browser/operations.js";
+import {
+  browserOperationLifecycle,
+  executeBrowserOperation,
+} from "../../browser/operations.js";
 import {
   BROWSER_OPERATIONS,
   type BrowserOperation,
@@ -20,7 +23,7 @@ import { shouldUseVirtualDesktopBrowser } from "../../browser/virtual-desktop-ta
 import { executeDesktopBrowserOperation } from "../../desktop/desktop-browser-operations.js";
 import type { ContentBlock } from "../../providers/types.js";
 import { LOCAL_PRINCIPALS } from "../auth/route-policy.js";
-import { resolveBrowserContext } from "./browser-context.js";
+import { resolveBrowserExecutionContext } from "./browser-context.js";
 export { browserCliConversationKey } from "./browser-context.js";
 import type { RouteDefinition, RouteHandlerArgs } from "./types.js";
 
@@ -68,16 +71,49 @@ async function handleBrowserExecute({
   const { operation, input, sessionId, conversationId, desktop } =
     BrowserExecuteParams.parse(body);
 
-  const context = await resolveBrowserContext(
+  const resolved = await resolveBrowserExecutionContext(
     conversationId,
     sessionId,
     headers,
     abortSignal,
   );
+  const { context, conversation } = resolved;
+  const typedOperation = operation as BrowserOperation;
+  const operationToken = conversation?.currentRequestId
+    ? conversation.browserModeSessions.beginOperation({
+        turnId: conversation.currentRequestId,
+        lifecycle: browserOperationLifecycle(typedOperation),
+        at: Date.now(),
+      })
+    : undefined;
   const execute = shouldUseVirtualDesktopBrowser(desktop, input, context)
     ? executeDesktopBrowserOperation
     : executeBrowserOperation;
-  const result = await execute(operation as BrowserOperation, input, context);
+  let result;
+  try {
+    result = await execute(typedOperation, input, context);
+  } catch (error) {
+    if (operationToken) {
+      conversation?.browserModeSessions.finishOperation(operationToken, {
+        at: Date.now(),
+        isError: true,
+        cancelled: context.signal?.aborted === true,
+      });
+    }
+    throw error;
+  }
+  if (operationToken) {
+    conversation?.browserModeSessions.finishOperation(operationToken, {
+      at: Date.now(),
+      isError: result.isError,
+      cancelled: context.signal?.aborted === true,
+      ...(typedOperation === "close"
+        ? { terminalReason: "browser_closed" as const }
+        : typedOperation === "detach"
+          ? { terminalReason: "browser_detached" as const }
+          : {}),
+    });
+  }
 
   const screenshots = extractScreenshots(result.contentBlocks);
 

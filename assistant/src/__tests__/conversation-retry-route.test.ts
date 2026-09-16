@@ -197,6 +197,7 @@ function makeConversation(opts: { processing?: boolean } = {}) {
   const emitActivityState = mock(
     (_phase: string, _reason: string, _options?: unknown) => {},
   );
+  const invalidateAllStructuralWaits = mock(() => 0);
   const conversation = {
     conversationId: "conv-retry-test",
     trustContext: undefined,
@@ -209,6 +210,7 @@ function makeConversation(opts: { processing?: boolean } = {}) {
     loadFromDb,
     runAgentLoop,
     emitActivityState,
+    modeSessions: { invalidateAllStructuralWaits },
   };
   return {
     conversation,
@@ -217,6 +219,7 @@ function makeConversation(opts: { processing?: boolean } = {}) {
     loadFromDb,
     runAgentLoop,
     emitActivityState,
+    invalidateAllStructuralWaits,
   };
 }
 
@@ -299,6 +302,7 @@ describe("POST /v1/conversations/:id/retry", () => {
     expect(ctx.conversation.isProcessing()).toBe(true);
     expect(ctx.conversation.abortController).not.toBeNull();
     expect(discardMock).toHaveBeenCalledWith("conv-retry-test");
+    expect(ctx.invalidateAllStructuralWaits).toHaveBeenCalledTimes(1);
 
     // Origin-less invalidation: the initiating client reconciles too.
     expect(publishConversationMessagesChangedMock).toHaveBeenCalledTimes(1);

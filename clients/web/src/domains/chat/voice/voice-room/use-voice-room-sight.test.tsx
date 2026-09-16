@@ -80,6 +80,7 @@ const captureVideoFrame = mock(
 const NATIVE_CAPTURE_QUALITY = 85;
 mock.module("@/domains/chat/voice/voice-room/voice-camera", () => ({
   captureVideoFrame,
+  isVoiceCameraSupported: () => true,
   NATIVE_CAPTURE_QUALITY,
 }));
 
@@ -320,6 +321,30 @@ afterEach(() => {
 });
 
 describe("useVoiceRoomSight: when it samples", () => {
+  test("negotiates one run across a flip and ends it when Live stops", async () => {
+    const startSightSession = mock((_epoch: number, _source: "live") => true);
+    const endSightSession = mock((_epoch: number) => true);
+    Object.assign(controls, { startSightSession, endSightSession });
+    useLiveVoiceStore.getState().setControls(controls);
+    const { view } = renderSight({ live: true });
+
+    expect(startSightSession).toHaveBeenCalledTimes(1);
+    const epoch = startSightSession.mock.calls[0]![0];
+    act(() => {
+      view.rerender({
+        cameraOpen: true,
+        facing: "user",
+        nativePreview: false,
+      });
+    });
+    expect(startSightSession).toHaveBeenCalledTimes(1);
+
+    act(() => {
+      view.result.current.setLive(false);
+    });
+    expect(endSightSession).toHaveBeenCalledWith(epoch);
+  });
+
   test("samples the room's viewfinder while Live is running", () => {
     const { video } = renderSight({ live: true });
 

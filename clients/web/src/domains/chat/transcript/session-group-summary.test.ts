@@ -60,6 +60,22 @@ describe("describeSessionGroupSummary", () => {
     });
   });
 
+  test("freezes a disconnected session at its last confirmed activity", () => {
+    expect(
+      describeSessionGroupSummary({
+        state: "disconnected",
+        startedAt: 10_000,
+        lastActivityAt: 45_000,
+        now: 90_000,
+      }),
+    ).toEqual({
+      state: "disconnected",
+      durationSeconds: 35,
+      lastActivityAt: 45_000,
+      endedAt: null,
+    });
+  });
+
   test("describes a settled segment without inventing terminal state", () => {
     expect(
       describeSessionGroupSummary({
