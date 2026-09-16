@@ -27,6 +27,7 @@ mock.module("../persistence/llm-request-log-store.js", () => ({
 
 // ── Imports (after mocks) ─────────────────────────────────────────────────────
 import type { AssistantEvent } from "../api/index.js";
+import { toolImageFilename } from "../daemon/assistant-attachments.js";
 import type {
   EventHandlerDeps,
   EventHandlerState,
@@ -185,6 +186,18 @@ describe("computer-use screenshot capture", () => {
       "direct-call",
       "wrapped-call",
     ]);
+    expect(state.computerUseToolNames).toEqual(
+      new Map([
+        ["direct-call", "computer_use_click"],
+        ["wrapped-call", "computer_use_scroll"],
+      ]),
+    );
+    expect(
+      toolImageFilename(
+        "image/png",
+        state.computerUseToolNames.get("wrapped-call"),
+      ),
+    ).toBe("computer-use-scroll.png");
     expect(state.computerUseScreenshotBlocks.has("wrapped-call")).toBe(true);
     expect(state.accumulatedToolContentBlocks).toEqual([]);
   });

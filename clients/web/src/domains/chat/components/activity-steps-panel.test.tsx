@@ -167,7 +167,7 @@ describe("ActivityStepsPanel — level 1 timeline", () => {
     expect(getByText("2 steps")).toBeTruthy();
   });
 
-  test("active trailing thinking settles when the turn becomes idle", () => {
+  test("active trailing thinking settles while awaiting user input", () => {
     const items: ToolCallCardItem[] = [
       { kind: "toolCall", toolCall: BASH },
       { kind: "thinking", text: "Preparing the next step" },
@@ -183,7 +183,7 @@ describe("ActivityStepsPanel — level 1 timeline", () => {
     expect(getAllByText("Thinking").length).toBeGreaterThan(0);
     expect(queryByText(/Worked for/)).toBeNull();
 
-    act(() => useTurnStore.setState({ phase: "idle" }));
+    act(() => useTurnStore.setState({ phase: "awaiting_user_input" }));
     expect(getByText(/Worked for/)).toBeTruthy();
   });
 
@@ -295,6 +295,113 @@ describe("ActivityStepsPanel — level 2 drill-in", () => {
     // The full (untruncated) reasoning renders in the detail level.
     expect(getByText(THINKING_TEXT)).toBeTruthy();
     expect(getByRole("button", { name: /back to all steps/i })).toBeTruthy();
+  });
+
+  test("resets drill-in when a replacement group occupies the same index", () => {
+    const replacement = makeToolCall({
+      id: "tc-replacement",
+      name: "bash",
+      input: { command: "git diff", activity: "Checking the replacement" },
+      result: "replacement output",
+    });
+    const { getByLabelText, getByText, queryByText, rerender } = render(
+      <ActivityStepsPanel
+        payload={{
+          messageId: "m-shared",
+          groupIndex: 0,
+          groupToolCallIds: [BASH.id],
+          items: ITEMS,
+          toolCalls: [BASH],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(getByLabelText("View details: Checking git status"));
+    expect(getByText("On branch main")).toBeTruthy();
+
+    rerender(
+      <ActivityStepsPanel
+        payload={{
+          messageId: "m-shared",
+          groupIndex: 0,
+          groupToolCallIds: [replacement.id],
+          items: [{ kind: "toolCall", toolCall: replacement }],
+          toolCalls: [replacement],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(queryByText("On branch main")).toBeNull();
+    expect(
+      getByLabelText("View details: Checking the replacement"),
+    ).toBeTruthy();
+  });
+
+  test("keeps drill-in through pagination relocation and donor prepend", () => {
+    const olderGroup = makeToolCall({
+      id: "tc-older-group",
+      name: "bash",
+      input: { command: "pwd", activity: "Checking the older group" },
+      result: "/workspace",
+    });
+    const donor = makeToolCall({
+      id: "tc-donor",
+      name: "bash",
+      input: { command: "ls", activity: "Checking donor context" },
+      result: "README.md",
+    });
+    seedTranscript([
+      {
+        id: "m-relocated",
+        role: "assistant",
+        contentBlocks: [{ type: "tool_use", toolCall: BASH }],
+      },
+    ]);
+    const { getByLabelText, getByText } = render(
+      <ActivityStepsPanel
+        payload={{
+          messageId: "m-relocated",
+          groupIndex: 0,
+          groupToolCallIds: [BASH.id],
+          items: [{ kind: "toolCall", toolCall: BASH }],
+          toolCalls: [BASH],
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(getByLabelText("View details: Checking git status"));
+    expect(getByText("On branch main")).toBeTruthy();
+
+    seedTranscript([
+      {
+        id: "m-relocated",
+        role: "assistant",
+        contentBlocks: [
+          { type: "tool_use", toolCall: olderGroup },
+          { type: "text", text: "Earlier response." },
+          { type: "tool_use", toolCall: BASH },
+        ],
+      },
+    ]);
+    expect(getByText("On branch main")).toBeTruthy();
+
+    seedTranscript([
+      {
+        id: "m-relocated",
+        role: "assistant",
+        contentBlocks: [
+          { type: "tool_use", toolCall: olderGroup },
+          { type: "text", text: "Earlier response." },
+          { type: "tool_use", toolCall: donor },
+          { type: "text", text: "\n" },
+          { type: "tool_use", toolCall: BASH },
+        ],
+      },
+    ]);
+    expect(getByText("On branch main")).toBeTruthy();
   });
 });
 
