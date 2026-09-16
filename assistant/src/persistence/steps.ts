@@ -485,10 +485,11 @@ import { migrateChannelInboundMessageIdIndex } from "./migrations/374-channel-in
 import { migrateCreateChannelOutboundPosts } from "./migrations/375-create-channel-outbound-posts.js";
 import { migrateNotificationDeliveriesCanonicalMessageId } from "./migrations/376-notification-deliveries-canonical-message-id.js";
 import { migrateAddSubagentBudgetStopReason } from "./migrations/377-add-subagent-budget-stop-reason.js";
+import { migrateCreateConversationToolSurfaces } from "./migrations/378-create-conversation-tool-surfaces.js";
 import {
   downCreateConversationModeSessions,
   migrateCreateConversationModeSessions,
-} from "./migrations/378-create-conversation-mode-sessions.js";
+} from "./migrations/379-create-conversation-mode-sessions.js";
 import type { MigrationStep } from "./migrations/run-migrations.js";
 
 export const migrationSteps: MigrationStep[] = [
@@ -1615,6 +1616,7 @@ export const migrationSteps: MigrationStep[] = [
     // this as a no-op.
     dependsOn: ["migrateCreateSubagentsTable"],
   },
+  migrateCreateConversationToolSurfaces,
   {
     name: "migrateCreateConversationModeSessions",
     run: migrateCreateConversationModeSessions,

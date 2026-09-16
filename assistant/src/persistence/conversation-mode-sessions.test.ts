@@ -12,7 +12,7 @@ import {
   updateConversationModeSessionActivity,
   updateConversationModeSessionBoundaries,
 } from "./conversation-mode-sessions.js";
-import { migrateCreateConversationModeSessions } from "./migrations/378-create-conversation-mode-sessions.js";
+import { migrateCreateConversationModeSessions } from "./migrations/379-create-conversation-mode-sessions.js";
 import * as schema from "./schema.js";
 
 function createStore() {

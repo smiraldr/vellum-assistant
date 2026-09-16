@@ -22,6 +22,10 @@ import {
 import { supportsChannelReaction } from "../messaging/providers/index.js";
 import type { PermissionPrompter } from "../permissions/prompter.js";
 import type { SecretPrompter } from "../permissions/secret-prompter.js";
+import {
+  hashConversationToolSurface,
+  recordConversationToolSurface,
+} from "../persistence/conversation-tool-surface.js";
 import { getBindingByConversation } from "../persistence/external-conversation-store.js";
 import { getAllDefaultPluginNames } from "../plugins/defaults/main.js";
 import { isActivationSession } from "../plugins/defaults/memory/activation-session-store.js";
@@ -962,6 +966,50 @@ export function canSpawnSubagentsForTurn(ctx: Conversation): boolean {
 }
 
 /**
+ * Build the agent loop's `onToolsSent` observer for a conversation: record
+ * the tool array each provider call sends so a later fork wake can replay it
+ * (`recordConversationToolSurface`). Only the loop's send boundary sees the
+ * sent array. The resolver is also consulted out of band (the token count
+ * behind `/compact` and `/clean`, compaction estimates), where a read outside
+ * any turn resolves a clientless surface that would overwrite the one the
+ * conversation's turns actually send.
+ *
+ * Arrays that are not the conversation's own surface are skipped: a replaying
+ * wake sends its source's array, an empty array is a tools-disabled call (a
+ * fork replaying it could never call `remember`), and disk-pressure cleanup
+ * mode narrows the wire to cleanup tools. Best-effort: a failed write is
+ * logged and the array still counts as recorded, so a persistent failure logs
+ * once per distinct surface rather than once per provider call.
+ */
+export function createWireToolSurfaceRecorder(
+  ctx: Conversation,
+): (tools: ToolDefinition[]) => void {
+  return (tools) => {
+    if (
+      !ctx.conversationId ||
+      ctx.wireToolReplay ||
+      tools.length === 0 ||
+      ctx.diskPressureCleanupModeActive === true
+    ) {
+      return;
+    }
+    try {
+      ctx.recordedToolSurfaceHash = recordConversationToolSurface(
+        ctx.conversationId,
+        tools,
+        ctx.recordedToolSurfaceHash,
+      );
+    } catch (err) {
+      log.warn(
+        { err, conversationId: ctx.conversationId },
+        "failed to record the conversation's wire tool surface; continuing",
+      );
+      ctx.recordedToolSurfaceHash = hashConversationToolSurface(tools);
+    }
+  };
+}
+
+/**
  * Build a resolveTools callback that merges base tool definitions with
  * dynamically projected skill tools on each agent turn. Also updates
  * allowedToolNames so newly-activated skill tools aren't blocked by
@@ -1255,6 +1303,14 @@ export function createResolveToolsCallback(
 
     ctx.allowedToolNames = turnAllowed;
 
-    return applyActivityField(allBaseDefs);
+    // A wake replaying its source's recorded surface sends that array
+    // verbatim: the wire tool block is the first tier of the provider cache
+    // prefix (tools → system → messages), so only the same bytes read the
+    // source's cached prefix instead of rewriting it. Execution is unaffected:
+    // `allowedToolNames` above and the executor's allowlist gate still decide
+    // what may run.
+    return ctx.wireToolReplay
+      ? [...ctx.wireToolReplay]
+      : applyActivityField(allBaseDefs);
   };
 }

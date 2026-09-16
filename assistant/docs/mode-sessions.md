@@ -24,7 +24,7 @@ never precedes the last confirmed activity.
 
 ## Persistence
 
-Migration 378 creates `conversation_mode_sessions`. Each row belongs to one
+Migration 379 creates `conversation_mode_sessions`. Each row belongs to one
 conversation through an `ON DELETE CASCADE` foreign key. The
 `(conversation_id, status)` index supports conversation-scoped active reads,
 while the primary key supports bounded ID batches for transcript pages.

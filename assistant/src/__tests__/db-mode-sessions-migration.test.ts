@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import {
   downCreateConversationModeSessions,
   migrateCreateConversationModeSessions,
-} from "../persistence/migrations/378-create-conversation-mode-sessions.js";
+} from "../persistence/migrations/379-create-conversation-mode-sessions.js";
 import * as schema from "../persistence/schema.js";
 
 function createPreMigrationDb() {
@@ -30,7 +30,7 @@ function tableExists(sqlite: Database): boolean {
   );
 }
 
-describe("migration 378: conversation mode sessions", () => {
+describe("migration 379: conversation mode sessions", () => {
   test("creates the table and indexed conversation lookup", () => {
     const { sqlite, db } = createPreMigrationDb();
     migrateCreateConversationModeSessions(db);
