@@ -105,6 +105,7 @@ export interface ConversationModeSessionCoordinatorDependencies {
     conversationId: string;
     expectedRevision: number;
     firstIncluded: { at: number; messageId: string } | null;
+    lastActivityAt: number;
     lastOwnedMessageId: string | null;
   }): ModeSessionWriteResult;
   advanceRevision(input: {
@@ -365,7 +366,10 @@ export class ConversationModeSessionCoordinator {
     turnId: string,
     messageId: string,
     at: number,
-    options?: { startsDisplayBoundary?: boolean },
+    options?: {
+      startsDisplayBoundary?: boolean;
+      publishMessagesChanged?: boolean;
+    },
   ): void {
     const turn = this.#turns.get(turnId) ?? { rows: [] };
     this.#turns.set(turnId, turn);
@@ -380,7 +384,7 @@ export class ConversationModeSessionCoordinator {
     };
     turn.rows.push(row);
     if (turn.owner) {
-      this.#repairTrackedRows(turn);
+      this.#repairTrackedRows(turn, options?.publishMessagesChanged ?? true);
     }
   }
 
@@ -689,7 +693,7 @@ export class ConversationModeSessionCoordinator {
     return false;
   }
 
-  #repairTrackedRows(turn: TurnState): boolean {
+  #repairTrackedRows(turn: TurnState, publishMessagesChanged = true): boolean {
     if (!turn.owner) {
       return false;
     }
@@ -702,7 +706,7 @@ export class ConversationModeSessionCoordinator {
       changed =
         this.#updateOrdinaryBoundaries(turn.owner, stampedRows) || changed;
     }
-    if (changed) {
+    if (changed && publishMessagesChanged) {
       this.#dependencies.publishMessagesChanged(this.#conversationId);
     }
     return changed;
@@ -746,9 +750,14 @@ export class ConversationModeSessionCoordinator {
             ? { at: earliest.at, messageId: earliest.id }
             : null;
       const lastOwnedMessageId = rows.at(-1)?.id ?? session.lastOwnedMessageId;
+      const lastActivityAt = rows.reduce(
+        (latest, row) => Math.max(latest, row.at),
+        session.lastActivityAt,
+      );
       if (
         session.firstIncludedAt === (firstIncluded?.at ?? null) &&
         session.firstIncludedMessageId === (firstIncluded?.messageId ?? null) &&
+        session.lastActivityAt === lastActivityAt &&
         session.lastOwnedMessageId === lastOwnedMessageId
       ) {
         return { ok: true, session };
@@ -758,6 +767,7 @@ export class ConversationModeSessionCoordinator {
         conversationId: this.#conversationId,
         expectedRevision: session.revision,
         firstIncluded,
+        lastActivityAt,
         lastOwnedMessageId,
       });
     });

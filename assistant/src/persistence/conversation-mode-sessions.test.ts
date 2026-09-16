@@ -81,6 +81,7 @@ describe("conversation mode session store", () => {
         conversationId: "conv-123",
         expectedRevision: 2,
         firstIncluded: { at: 90, messageId: "message-123" },
+        lastActivityAt: 175,
         lastOwnedMessageId: "message-789",
       },
       options,
@@ -91,6 +92,7 @@ describe("conversation mode session store", () => {
         revision: 3,
         firstIncludedAt: 90,
         firstIncludedMessageId: "message-123",
+        lastActivityAt: 175,
         lastOwnedMessageId: "message-789",
       },
     });
@@ -107,7 +109,7 @@ describe("conversation mode session store", () => {
       ),
     ).toMatchObject({
       ok: true,
-      session: { revision: 4, lastActivityAt: 150 },
+      session: { revision: 4, lastActivityAt: 175 },
     });
   });
 
@@ -298,6 +300,7 @@ describe("conversation mode session store", () => {
         conversationId: "conv-123",
         expectedRevision: 1,
         firstIncluded: { at: 90, messageId: "message-deleted" },
+        lastActivityAt: 100,
         lastOwnedMessageId: "message-last",
       },
       options,

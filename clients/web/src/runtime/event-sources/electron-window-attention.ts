@@ -58,9 +58,12 @@ export function publishElectronWindowAttentionSource(): () => void {
       return;
     }
     const onScreen = payload.visible && !payload.minimized;
-    // The first payload is the current state rather than a transition into
-    // it, so it seeds the baseline instead of publishing a boot-time edge.
-    if (lastOnScreen !== null && onScreen !== lastOnScreen) {
+    // A first on-screen payload only seeds the baseline. A first off-screen
+    // payload must notify consumers that mounted before this source.
+    if (
+      (lastOnScreen === null && !onScreen) ||
+      (lastOnScreen !== null && onScreen !== lastOnScreen)
+    ) {
       publishLifecycleEdge(onScreen ? "resume" : "hidden", "window_attention");
     }
     lastOnScreen = onScreen;

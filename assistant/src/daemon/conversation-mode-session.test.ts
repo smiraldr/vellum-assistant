@@ -84,6 +84,7 @@ function createDependencies(initial = activeSession()) {
         revision: current.revision + 1,
         firstIncludedAt: input.firstIncluded?.at ?? null,
         firstIncludedMessageId: input.firstIncluded?.messageId ?? null,
+        lastActivityAt: Math.max(current.lastActivityAt, input.lastActivityAt),
         lastOwnedMessageId: input.lastOwnedMessageId,
       })),
     advanceRevision: (input) =>
@@ -635,6 +636,7 @@ describe("ConversationModeSessionCoordinator", () => {
 
     expect(store.session()).toMatchObject({
       firstIncludedMessageId: "assistant-123",
+      lastActivityAt: 110,
       lastOwnedMessageId: "assistant-123",
     });
     store.allowStamp("tool-result-123");
@@ -669,6 +671,7 @@ describe("ConversationModeSessionCoordinator", () => {
     ]);
     expect(store.session()).toMatchObject({
       firstIncludedMessageId: "assistant-123",
+      lastActivityAt: 120,
       lastOwnedMessageId: "assistant-123",
     });
   });
@@ -699,6 +702,7 @@ describe("ConversationModeSessionCoordinator", () => {
     ]);
     expect(store.session()).toMatchObject({
       status: "completed",
+      lastActivityAt: 120,
       lastOwnedMessageId: "assistant-123",
     });
   });

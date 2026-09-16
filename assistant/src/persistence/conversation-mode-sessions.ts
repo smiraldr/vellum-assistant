@@ -59,6 +59,7 @@ export interface UpdateModeSessionActivityInput extends RevisionedModeSessionInp
 
 export interface UpdateModeSessionBoundariesInput extends RevisionedModeSessionInput {
   firstIncluded: { at: number; messageId: string } | null;
+  lastActivityAt: number;
   lastOwnedMessageId: string | null;
 }
 
@@ -235,9 +236,10 @@ export function updateConversationModeSessionBoundaries(
 ): ModeSessionWriteResult {
   return mutateActiveSession(
     input,
-    () => ({
+    (current) => ({
       firstIncludedAt: input.firstIncluded?.at ?? null,
       firstIncludedMessageId: input.firstIncluded?.messageId ?? null,
+      lastActivityAt: Math.max(current.lastActivityAt, input.lastActivityAt),
       lastOwnedMessageId: input.lastOwnedMessageId,
     }),
     options,

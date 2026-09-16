@@ -904,6 +904,7 @@ async function writeStandaloneImage(
         ...persistOptions,
         attachments,
         requestId,
+        publishModeSessionChanges: false,
         // Asked again in the insert's own tick, about both things that can
         // stop being true across the awaits the persist takes to materialize
         // the attachment and build its content.

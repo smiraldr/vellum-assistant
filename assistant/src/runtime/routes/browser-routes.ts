@@ -22,10 +22,13 @@ import {
 import { shouldUseVirtualDesktopBrowser } from "../../browser/virtual-desktop-target.js";
 import { executeDesktopBrowserOperation } from "../../desktop/desktop-browser-operations.js";
 import type { ContentBlock } from "../../providers/types.js";
+import { getLogger } from "../../util/logger.js";
 import { LOCAL_PRINCIPALS } from "../auth/route-policy.js";
 import { resolveBrowserExecutionContext } from "./browser-context.js";
 export { browserCliConversationKey } from "./browser-context.js";
 import type { RouteDefinition, RouteHandlerArgs } from "./types.js";
+
+const log = getLogger("browser-routes");
 
 // ── Param validation ─────────────────────────────────────────────────
 
@@ -89,31 +92,36 @@ async function handleBrowserExecute({
   const execute = shouldUseVirtualDesktopBrowser(desktop, input, context)
     ? executeDesktopBrowserOperation
     : executeBrowserOperation;
+  const finishOperationTracking = (isError: boolean) => {
+    if (!operationToken) {
+      return;
+    }
+    try {
+      conversation?.browserModeSessions.finishOperation(operationToken, {
+        at: Date.now(),
+        isError,
+        cancelled: context.signal?.aborted === true,
+        ...(typedOperation === "close"
+          ? { terminalReason: "browser_closed" as const }
+          : typedOperation === "detach"
+            ? { terminalReason: "browser_detached" as const }
+            : {}),
+      });
+    } catch (error) {
+      log.warn(
+        { err: error, conversationId, operation: typedOperation },
+        "Browser operation session tracking failed",
+      );
+    }
+  };
   let result;
   try {
     result = await execute(typedOperation, input, context);
   } catch (error) {
-    if (operationToken) {
-      conversation?.browserModeSessions.finishOperation(operationToken, {
-        at: Date.now(),
-        isError: true,
-        cancelled: context.signal?.aborted === true,
-      });
-    }
+    finishOperationTracking(true);
     throw error;
   }
-  if (operationToken) {
-    conversation?.browserModeSessions.finishOperation(operationToken, {
-      at: Date.now(),
-      isError: result.isError,
-      cancelled: context.signal?.aborted === true,
-      ...(typedOperation === "close"
-        ? { terminalReason: "browser_closed" as const }
-        : typedOperation === "detach"
-          ? { terminalReason: "browser_detached" as const }
-          : {}),
-    });
-  }
+  finishOperationTracking(result.isError);
 
   const screenshots = extractScreenshots(result.contentBlocks);
 

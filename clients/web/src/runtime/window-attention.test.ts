@@ -12,6 +12,7 @@ import type { WindowAttentionPayload } from "@vellumai/ipc-contract";
 import {
   isVisibleToUser,
   isWindowAttended,
+  isWindowOnScreen,
   subscribeToWindowAttention,
 } from "@/runtime/window-attention";
 
@@ -177,5 +178,18 @@ describe("isVisibleToUser", () => {
 
     send({ visible: true, focused: true, minimized: true });
     expect(isVisibleToUser()).toBe(false);
+  });
+});
+
+describe("isWindowOnScreen", () => {
+  test("tracks visibility without treating lost focus as hidden", () => {
+    installBridge();
+    unsubscribe = subscribeToWindowAttention(() => undefined);
+
+    send({ visible: true, focused: false, minimized: false });
+    expect(isWindowOnScreen()).toBe(true);
+
+    send({ visible: true, focused: true, minimized: true });
+    expect(isWindowOnScreen()).toBe(false);
   });
 });

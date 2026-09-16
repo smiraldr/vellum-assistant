@@ -137,6 +137,7 @@ mock.module("../../daemon/conversation-registry.js", () => ({
     mockFindConversationCalls.push(conversationId);
     return mockConversation ?? undefined;
   },
+  findConversationOrSubagent: () => mockConversation ?? undefined,
 }));
 
 let desktopEnabled = false;
@@ -580,6 +581,41 @@ describe("browser_execute route", () => {
       terminalReason: "browser_closed",
     });
   });
+
+  test.each(["navigate", "close"] as const)(
+    "preserves a successful %s result when session tracking fails",
+    async (operation) => {
+      mockOperationResult = {
+        content: `${operation} completed`,
+        isError: false,
+      };
+      const lifecycle = browserLifecycle();
+      mockConversation = {
+        currentRequestId: "turn-123",
+        browserModeSessions: {
+          ...lifecycle,
+          finishOperation(token, outcome) {
+            lifecycle.finishOperation(token, outcome);
+            throw new Error("session tracking unavailable");
+          },
+        },
+        getTurnActorPrincipalId: () => undefined,
+      };
+
+      const result = await callHandler({
+        operation,
+        input: operation === "navigate" ? { url: "https://example.com" } : {},
+        conversationId: "conv-live",
+      });
+
+      expect(result).toEqual({
+        content: `${operation} completed`,
+        isError: false,
+      });
+      expect(mockOperationCalls).toHaveLength(1);
+      expect(lifecycleFinishes).toHaveLength(1);
+    },
+  );
 
   test("does not observe lifecycle for a standalone CLI operation", async () => {
     await callHandler({ operation: "navigate", sessionId: "standalone" });

@@ -1,5 +1,8 @@
 import { useSyncExternalStore } from "react";
 
+import { subscribe } from "@/lib/event-bus";
+import { isWindowOnScreen } from "@/runtime/window-attention";
+
 const TICK_INTERVAL_MS = 1_000;
 
 type ClockListener = () => void;
@@ -7,13 +10,8 @@ type ClockListener = () => void;
 const listeners = new Set<ClockListener>();
 let clockNow = Date.now();
 let intervalId: ReturnType<typeof setInterval> | null = null;
-let listeningForVisibility = false;
-
-function documentIsVisible(): boolean {
-  return (
-    typeof document === "undefined" || document.visibilityState !== "hidden"
-  );
-}
+let appVisible = true;
+let lifecycleUnsubscribes: Array<() => void> | null = null;
 
 function publishCurrentTime(): void {
   clockNow = Date.now();
@@ -30,27 +28,44 @@ function stopClock(): void {
 }
 
 function startClock(): void {
-  if (intervalId === null && listeners.size > 0 && documentIsVisible()) {
+  if (intervalId === null && listeners.size > 0 && appVisible) {
     intervalId = setInterval(publishCurrentTime, TICK_INTERVAL_MS);
   }
 }
 
-function handleVisibilityChange(): void {
-  if (!documentIsVisible()) {
-    stopClock();
+function subscribeLifecycle(): void {
+  if (lifecycleUnsubscribes) {
     return;
   }
-  publishCurrentTime();
-  startClock();
+  appVisible =
+    (typeof document === "undefined" ||
+      document.visibilityState !== "hidden") &&
+    isWindowOnScreen();
+  lifecycleUnsubscribes = [
+    subscribe("app.hidden", () => {
+      appVisible = false;
+      stopClock();
+    }),
+    subscribe("app.resume", ({ signal }) => {
+      if (signal === "online") {
+        return;
+      }
+      appVisible = true;
+      publishCurrentTime();
+      startClock();
+    }),
+  ];
+}
+
+function unsubscribeLifecycle(): void {
+  lifecycleUnsubscribes?.forEach((unsubscribe) => unsubscribe());
+  lifecycleUnsubscribes = null;
 }
 
 function subscribeClock(listener: ClockListener): () => void {
   listeners.add(listener);
   clockNow = Date.now();
-  if (!listeningForVisibility && typeof document !== "undefined") {
-    document.addEventListener("visibilitychange", handleVisibilityChange);
-    listeningForVisibility = true;
-  }
+  subscribeLifecycle();
   startClock();
 
   return () => {
@@ -59,10 +74,7 @@ function subscribeClock(listener: ClockListener): () => void {
       return;
     }
     stopClock();
-    if (listeningForVisibility && typeof document !== "undefined") {
-      document.removeEventListener("visibilitychange", handleVisibilityChange);
-      listeningForVisibility = false;
-    }
+    unsubscribeLifecycle();
   };
 }
 

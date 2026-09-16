@@ -1013,6 +1013,8 @@ export interface PersistMessageOptions {
   requestClientOs?: string;
   /** Existing structural surface whose accepted action created this turn. */
   activeSurfaceId?: string;
+  /** Whether mode-session stamping publishes its own history invalidation. */
+  publishModeSessionChanges?: boolean;
   /**
    * Which of `attachments`, by the id the caller holds, arrived as ambient
    * camera frames rather than files the user picked. Stamps
@@ -1462,7 +1464,10 @@ export async function persistQueuedMessageBody(
       requestId,
       persistedUserMessage.id,
       persistedUserMessage.createdAt,
-      { startsDisplayBoundary: false },
+      {
+        startsDisplayBoundary: false,
+        publishMessagesChanged: options.publishModeSessionChanges ?? true,
+      },
     );
 
     if (turnCtx) {

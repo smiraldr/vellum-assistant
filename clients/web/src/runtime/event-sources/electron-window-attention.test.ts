@@ -85,6 +85,18 @@ describe("publishElectronWindowAttentionSource", () => {
     ]);
   });
 
+  test("publishes app.hidden when the first payload is off screen", () => {
+    installBridge();
+    start();
+
+    send({ visible: true, focused: false, minimized: true });
+
+    expect(publishSpy.mock.calls).toEqual([
+      ["app.attention", { attended: false }],
+      ["app.hidden", { signal: "window_attention" }],
+    ]);
+  });
+
   test("publishes app.attention when a window on screen loses focus", () => {
     installBridge();
     start();
@@ -175,20 +187,6 @@ describe("publishElectronWindowAttentionSource", () => {
       ["app.attention", { attended: true }],
       ["app.attention", { attended: false }],
       ["app.attention", { attended: true }],
-    ]);
-  });
-
-  // The first payload is the current state rather than a transition into it,
-  // so nothing is backgrounded or foregrounded by a window merely reporting
-  // where it already was.
-  test("seeds the on-screen baseline from the first payload without an edge", () => {
-    installBridge();
-    start();
-
-    send({ visible: false, focused: false, minimized: true });
-
-    expect(publishSpy.mock.calls).toEqual([
-      ["app.attention", { attended: false }],
     ]);
   });
 
