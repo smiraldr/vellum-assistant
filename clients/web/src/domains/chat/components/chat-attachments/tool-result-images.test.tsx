@@ -65,6 +65,7 @@ const restorePreviewModal = mockAttachmentPreviewModal();
 const imagesModule =
   await import("@/domains/chat/components/chat-attachments/tool-result-images");
 const { ToolResultImages } = imagesModule;
+const { projectToolResultImages, resolveToolResultImages } = imagesModule;
 
 interface StripOptions {
   messageAttachments?: DisplayAttachment[];
@@ -339,6 +340,68 @@ describe("ToolResultImages referenced media", () => {
       screen.queryByTestId("tool-result-image") ??
         screen.queryByTestId("tool-result-image-placeholder"),
     ).not.toBeNull();
+  });
+});
+
+describe("projectToolResultImages", () => {
+  test("keeps tool-call occurrence identity on inline and referenced images", () => {
+    const inline: ChatMessageToolCall = {
+      id: "tc-inline",
+      name: "computer_use_screenshot",
+      input: {},
+      imageDataList: ["AAAA"],
+    };
+    const referenced: ChatMessageToolCall = {
+      ...inline,
+      imageDataList: undefined,
+      imageAttachmentIds: ["att-1"],
+    };
+
+    expect(projectToolResultImages([inline])[0]?.toolCallId).toBe("tc-inline");
+    expect(projectToolResultImages([referenced])[0]?.toolCallId).toBe(
+      "tc-inline",
+    );
+  });
+
+  test("retains raw images before markdown and reply-attachment suppression", () => {
+    const toolCall: ChatMessageToolCall = {
+      id: "tc-raw",
+      name: "computer_use_screenshot",
+      input: {},
+      result: "Saved /workspace/frame.png",
+      imageAttachmentIds: ["att-shared"],
+    };
+    const attachment: DisplayAttachment = {
+      id: "att-shared",
+      filename: "frame.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+      previewUrl: null,
+    };
+
+    expect(projectToolResultImages([toolCall])).toHaveLength(1);
+    expect(
+      resolveToolResultImages([toolCall], [attachment], new Set(["frame.png"])),
+    ).toHaveLength(0);
+  });
+
+  test("keeps two calls sharing one attachment as distinct occurrences", () => {
+    const calls: ChatMessageToolCall[] = ["tc-a", "tc-b"].map((id) => ({
+      id,
+      name: "computer_use_screenshot",
+      input: {},
+      imageAttachmentIds: ["att-shared"],
+    }));
+
+    expect(
+      projectToolResultImages(calls).map((image) => [
+        image.id,
+        image.toolCallId,
+      ]),
+    ).toEqual([
+      ["att-shared", "tc-a"],
+      ["att-shared", "tc-b"],
+    ]);
   });
 });
 

@@ -75,6 +75,8 @@ export interface MultiActivityGroupProps {
    */
   messageId?: string;
   groupIndex?: number;
+  /** Tool-call occurrence ids from the group before display suppression. */
+  groupToolCallIds?: string[];
   /**
    * Ordered (thinking | toolCall) items driving the steps timeline. When
    * supplied, the group interleaves thinking steps between tool steps in the
@@ -345,6 +347,7 @@ function UnifiedMultiActivityGroup(
     onDismissUnknownNudge,
     messageId,
     groupIndex,
+    groupToolCallIds,
     active,
   } = props;
   const { t } = useTranslation("chat");
@@ -363,11 +366,19 @@ function UnifiedMultiActivityGroup(
     () => ({
       messageId,
       groupIndex,
+      groupToolCallIds,
       items: effectiveItems,
       toolCalls,
       active,
     }),
-    [messageId, groupIndex, effectiveItems, toolCalls, active],
+    [
+      messageId,
+      groupIndex,
+      groupToolCallIds,
+      effectiveItems,
+      toolCalls,
+      active,
+    ],
   );
 
   // The header whose steps panel is currently open renders with the persistent

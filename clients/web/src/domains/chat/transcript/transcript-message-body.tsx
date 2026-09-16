@@ -2,6 +2,7 @@ import {
   isNoResponseOnlyText,
   isPotentialNoResponsePrefix,
 } from "@vellumai/service-contracts/no-response";
+import { isComputerUseToolCall } from "@vellumai/assistant-api";
 import {
   Fragment,
   type MouseEvent as ReactMouseEvent,
@@ -865,6 +866,10 @@ export function TranscriptMessageBody({
       cardItems[0]?.kind === "toolCall" &&
       renderableToolCalls.length === 1 &&
       !WEB_TOOL_NAMES.has(renderableToolCalls[0]!.name) &&
+      !isComputerUseToolCall(
+        renderableToolCalls[0]!.name,
+        renderableToolCalls[0]!.input,
+      ) &&
       !renderableToolCalls[0]!.pendingConfirmation
         ? renderableToolCalls[0]!
         : null;
@@ -906,6 +911,7 @@ export function TranscriptMessageBody({
           <div className="w-full">
             <MultiActivityGroup
               toolCalls={groupCardToolCalls}
+              groupToolCallIds={groupToolCalls.map((toolCall) => toolCall.id)}
               items={groupCardItems}
               active={isStreaming && isLatestMessage && isLastGroup}
               messageId={message.id}

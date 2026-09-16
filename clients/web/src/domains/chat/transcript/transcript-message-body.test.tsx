@@ -205,10 +205,12 @@ mock.module(
       toolCalls,
       items,
       active,
+      groupToolCallIds,
     }: {
       autoExpand?: boolean;
       toolCalls: Array<{ id: string }>;
       active?: boolean;
+      groupToolCallIds?: string[];
       items?: Array<
         | { kind: "thinking"; text: string }
         | { kind: "toolCall"; toolCall: { id: string } }
@@ -219,6 +221,7 @@ mock.module(
         data-auto-expand={autoExpand ? "true" : "false"}
         data-active={active ? "true" : "false"}
         data-tool-call-ids={toolCalls.map((tc) => tc.id).join(",")}
+        data-group-tool-call-ids={groupToolCallIds?.join(",") ?? ""}
         // Surface the ordered items so the merged-card tests can assert the
         // interleaved thinking + tool steps the card would render in its body.
         data-item-kinds={items?.map((i) => i.kind).join(",") ?? ""}
@@ -337,6 +340,7 @@ import { MIN_VERSION as REDACTED_CHIPS_MIN_VERSION } from "@/lib/backwards-compa
 import { useAssistantIdentityStore } from "@/stores/assistant-identity-store";
 import { useAssistantFeatureFlagStore } from "@/stores/assistant-feature-flag-store";
 import { useClientFeatureFlagStore } from "@/stores/client-feature-flag-store";
+import { useWorkflowStore } from "@/domains/chat/workflow-store";
 
 const noop = () => {};
 
@@ -395,6 +399,7 @@ afterAll(() => {
 afterEach(() => {
   cleanup();
   useAssistantFeatureFlagStore.setState({ sendUserMessage: false });
+  useWorkflowStore.getState().reset();
 });
 
 function renderMessage(
@@ -1790,17 +1795,58 @@ describe("TranscriptMessageBody", () => {
     );
     expect(first.getAttribute("data-item-thinking")).toBe("reason A|reason B");
     expect(first.getAttribute("data-item-tool-ids")).toBe("tc-a");
+    expect(first.getAttribute("data-group-tool-call-ids")).toBe("tc-a");
 
     // The second card carries the trailing tool + thinking run.
     const second = cards[1]!;
     expect(second.getAttribute("data-item-kinds")).toBe("toolCall,thinking");
     expect(second.getAttribute("data-item-tool-ids")).toBe("tc-b");
+    expect(second.getAttribute("data-group-tool-call-ids")).toBe("tc-b");
 
     // The text between the two runs renders.
     const markdowns = container.querySelectorAll("[data-testid='markdown']");
     expect(
       Array.from(markdowns).some((m) => m.textContent === "the middle answer"),
     ).toBe(true);
+  });
+
+  test("keeps raw group ids when a process-backed call is suppressed", () => {
+    useWorkflowStore.getState().startRun({
+      runId: "wf-1",
+      toolUseId: "tc-process",
+      timestamp: 1,
+    });
+    const processCall: ChatMessageToolCall = {
+      id: "tc-process",
+      name: "run_workflow",
+      input: {},
+      result: JSON.stringify({ runId: "wf-1" }),
+      completedAt: 1,
+    };
+    const visibleCall: ChatMessageToolCall = {
+      id: "tc-visible",
+      name: "bash",
+      input: { command: "pwd" },
+      completedAt: 2,
+    };
+    const { getByTestId } = render(
+      <TranscriptMessageBody
+        message={{
+          id: "m-process-suppression",
+          role: "assistant",
+          contentBlocks: [toolUseBlock(processCall), toolUseBlock(visibleCall)],
+          toolCalls: [processCall, visibleCall],
+          timestamp: 1_000,
+        }}
+        onSurfaceAction={noop}
+      />,
+    );
+
+    const card = getByTestId("tool-progress-card");
+    expect(card.getAttribute("data-tool-call-ids")).toBe("tc-visible");
+    expect(card.getAttribute("data-group-tool-call-ids")).toBe(
+      "tc-process,tc-visible",
+    );
   });
 
   test("keeps a blank-separated ordinary run in one active header while streaming", () => {
@@ -1983,6 +2029,41 @@ describe("TranscriptMessageBody", () => {
       container.querySelector("[data-testid='tool-progress-card']"),
     ).toBeNull();
   });
+
+  test.each([
+    ["direct", "computer_use_screenshot", {}],
+    ["wrapped", "skill_execute", { tool: "computer_use_screenshot" }],
+  ])(
+    "routes a lone %s computer-use call to the activity header",
+    (_kind, name, input) => {
+      const { container } = render(
+        <TranscriptMessageBody
+          message={{
+            id: `computer-use-${_kind}`,
+            role: "assistant",
+            contentBlocks: [
+              toolUseBlock({
+                id: `tc-${_kind}`,
+                name,
+                input,
+                imageDataList: ["AAAA"],
+                completedAt: 1,
+              }),
+            ],
+            timestamp: 1_000,
+          }}
+          onSurfaceAction={noop}
+        />,
+      );
+
+      expect(
+        container.querySelector("[data-testid='inline-tool-link']"),
+      ).toBeNull();
+      expect(
+        container.querySelector("[data-testid='tool-progress-card']"),
+      ).not.toBeNull();
+    },
+  );
 
   test("renders images returned by an assistant tool result", () => {
     const toolCall: ChatMessageToolCall = {

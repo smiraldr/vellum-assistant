@@ -10,6 +10,7 @@ import { describe, expect, test } from "bun:test";
 import {
   filterCardBackedProcessCalls,
   isLastActivityGroup,
+  resolveActivityGroupIndex,
   type ProcessCardBacking,
 } from "@/domains/chat/hooks/use-live-activity-group";
 import type { ContentBlockGroup } from "@/domains/chat/transcript/message-content";
@@ -154,5 +155,49 @@ describe("isLastActivityGroup", () => {
     expect(
       isLastActivityGroup([{ type: "text", text: "visible response" }], 0),
     ).toBe(false);
+  });
+});
+
+describe("resolveActivityGroupIndex", () => {
+  const activity = (
+    ...toolCalls: ChatMessageToolCall[]
+  ): ContentBlockGroup => ({
+    type: "activity",
+    items: toolCalls.map((toolCall) => ({ type: "tool_use", toolCall })),
+  });
+
+  test("keeps the indexed block when it still owns the anchor", () => {
+    expect(resolveActivityGroupIndex([activity(BASH)], 0, BASH.id)).toBe(0);
+  });
+
+  test("relocates a donor block after older prose and activity are prepended", () => {
+    const groups: ContentBlockGroup[] = [
+      { type: "text", text: "Earlier response" },
+      activity(WORKFLOW),
+      { type: "text", text: "Boundary" },
+      activity(BASH),
+    ];
+    expect(resolveActivityGroupIndex(groups, 0, BASH.id)).toBe(3);
+  });
+
+  test("keeps locating an existing call when older history extends its group", () => {
+    expect(
+      resolveActivityGroupIndex([activity(WORKFLOW, BASH)], 0, BASH.id),
+    ).toBe(0);
+  });
+
+  test("returns null instead of switching to another block when the anchor is gone", () => {
+    expect(resolveActivityGroupIndex([activity(WORKFLOW)], 0, BASH.id)).toBe(
+      null,
+    );
+  });
+
+  test("retains exact-index behavior for identity-less groups", () => {
+    const groups: ContentBlockGroup[] = [
+      { type: "text", text: "Boundary" },
+      activity(BASH),
+    ];
+    expect(resolveActivityGroupIndex(groups, 1)).toBe(1);
+    expect(resolveActivityGroupIndex(groups, 0)).toBeNull();
   });
 });

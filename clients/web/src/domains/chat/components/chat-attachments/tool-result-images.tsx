@@ -180,6 +180,8 @@ function toolResultImageInputs(toolCall: ChatMessageToolCall): {
 export interface ToolResultImage extends DisplayAttachment {
   /** Stable across a mid-turn removal and unique within the strip. */
   stripKey: string;
+  /** Producing tool-call occurrence, stable across inline-to-reference swaps. */
+  toolCallId: string;
 }
 
 /**
@@ -202,9 +204,8 @@ export interface ToolResultImage extends DisplayAttachment {
  * generic image type — the fetched blob supplies the real bytes for preview
  * and download.
  */
-function buildToolResultAttachments(
+export function projectToolResultImages(
   toolCalls: ChatMessageToolCall[],
-  embeddedImageNames: ReadonlySet<string>,
 ): ToolResultImage[] {
   const attachments: ToolResultImage[] = [];
   let globalIndex = 0;
@@ -212,17 +213,6 @@ function buildToolResultAttachments(
     const { refIds, base64Images } = toolResultImageInputs(tc);
     const total = refIds.length + base64Images.length;
     const prefix = toolNameToFilePrefix(tc.name);
-    // Positional: a media tool writes its images to the workspace in the order
-    // it reports them, so image `i` of this call is the file named `i`th in its
-    // result. An image whose file the reply embeds is presented there instead.
-    const savedNames = embeddedImageNames.size
-      ? imageFileNamesInResult(tc.result)
-      : [];
-    const isEmbedded = (index: number): boolean => {
-      const name = savedNames[index];
-      return name !== undefined && embeddedImageNames.has(name);
-    };
-    let imageIndex = -1;
     let localIndex = 0;
     const nameFor = (ext: string): string => {
       const base = tc.name ? prefix : `image-${globalIndex}`;
@@ -232,13 +222,10 @@ function buildToolResultAttachments(
     refIds.forEach((attachmentId) => {
       globalIndex += 1;
       localIndex += 1;
-      imageIndex += 1;
-      if (isEmbedded(imageIndex)) {
-        return;
-      }
       attachments.push({
         id: attachmentId,
         stripKey: `tool-ref:${tc.id}:${localIndex}`,
+        toolCallId: tc.id,
         filename: nameFor("png"),
         mimeType: "image/png",
         sizeBytes: 0,
@@ -248,16 +235,13 @@ function buildToolResultAttachments(
     base64Images.forEach((imageData) => {
       globalIndex += 1;
       localIndex += 1;
-      imageIndex += 1;
-      if (isEmbedded(imageIndex)) {
-        return;
-      }
       const { mimeType, base64, src } = normalizeToolResultImage(imageData);
       const ext = mimeType.split("/")[1] ?? "png";
       const syntheticId = `tool-image:${tc.id}:${localIndex}`;
       attachments.push({
         id: syntheticId,
         stripKey: syntheticId,
+        toolCallId: tc.id,
         filename: nameFor(ext),
         mimeType,
         sizeBytes: estimateBase64Bytes(base64),
@@ -266,6 +250,34 @@ function buildToolResultAttachments(
     });
   }
   return attachments;
+}
+
+function embeddedToolResultImageKeys(
+  toolCalls: ChatMessageToolCall[],
+  projectedImages: ToolResultImage[],
+  embeddedImageNames: ReadonlySet<string>,
+): Set<string> {
+  const keys = new Set<string>();
+  if (embeddedImageNames.size === 0) {
+    return keys;
+  }
+  const imagesByToolCallId = new Map<string, ToolResultImage[]>();
+  for (const image of projectedImages) {
+    const images = imagesByToolCallId.get(image.toolCallId) ?? [];
+    images.push(image);
+    imagesByToolCallId.set(image.toolCallId, images);
+  }
+  for (const toolCall of toolCalls) {
+    const savedNames = imageFileNamesInResult(toolCall.result);
+    const images = imagesByToolCallId.get(toolCall.id) ?? [];
+    for (let index = 0; index < images.length; index += 1) {
+      const name = savedNames[index];
+      if (name !== undefined && embeddedImageNames.has(name)) {
+        keys.add(images[index]!.stripKey);
+      }
+    }
+  }
+  return keys;
 }
 
 /**
@@ -296,7 +308,15 @@ export function resolveToolResultImages(
   messageAttachments: readonly DisplayAttachment[] | undefined,
   embeddedImageNames: ReadonlySet<string> = EMPTY_NAMES,
 ): ToolResultImage[] {
-  const shown = buildToolResultAttachments(toolCalls, embeddedImageNames);
+  const projectedImages = projectToolResultImages(toolCalls);
+  const embeddedKeys = embeddedToolResultImageKeys(
+    toolCalls,
+    projectedImages,
+    embeddedImageNames,
+  );
+  const shown = projectedImages.filter(
+    (image) => !embeddedKeys.has(image.stripKey),
+  );
   if (!messageAttachments?.length) {
     return shown;
   }

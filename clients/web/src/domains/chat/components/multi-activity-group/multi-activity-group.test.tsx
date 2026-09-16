@@ -173,6 +173,7 @@ describe("MultiActivityGroup — header opens the activity-steps panel", () => {
     const { getByRole } = renderCard(toolCalls, {
       messageId: "m1",
       groupIndex: 2,
+      groupToolCallIds: ["tc-raw", "tc-1", "tc-2"],
     });
     fireEvent.click(getByRole("button", { name: /view steps/i }));
     const state = useViewerStore.getState();
@@ -180,6 +181,11 @@ describe("MultiActivityGroup — header opens the activity-steps panel", () => {
     expect(state.activeActivitySteps).not.toBeNull();
     expect(state.activeActivitySteps?.messageId).toBe("m1");
     expect(state.activeActivitySteps?.groupIndex).toBe(2);
+    expect(state.activeActivitySteps?.groupToolCallIds).toEqual([
+      "tc-raw",
+      "tc-1",
+      "tc-2",
+    ]);
     expect(state.activeActivitySteps?.toolCalls.map((tc) => tc.id)).toEqual([
       "tc-1",
       "tc-2",

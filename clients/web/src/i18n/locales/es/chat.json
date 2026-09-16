@@ -65,6 +65,10 @@
     "backAria": "Volver a todos los pasos",
     "backTooltip": "Todos los pasos",
     "closeSteps": "Cerrar pasos",
+    "screenshotAria": "Vista previa de la captura de pantalla de {activity}",
+    "screenshotFallbackAria": "Vista previa de la captura de pantalla del ordenador",
+    "screenshotFallbackTitle": "Captura de pantalla del ordenador",
+    "screenshotTitle": "Captura de pantalla de {activity}",
     "thinkingTitle": "Pensando",
     "viewThinkingAria": "Ver razonamiento"
   },

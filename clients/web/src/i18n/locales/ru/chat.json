@@ -24,6 +24,10 @@
   "activityStepsPanel": {
     "backAria": "Назад ко всем шагам",
     "backTooltip": "Все шаги",
+    "screenshotAria": "Открыть снимок экрана: {activity}",
+    "screenshotFallbackAria": "Открыть снимок экрана компьютера",
+    "screenshotFallbackTitle": "Снимок экрана компьютера",
+    "screenshotTitle": "Снимок экрана: {activity}",
     "thinkingTitle": "Размышление"
   },
   "addToChatSheet": {

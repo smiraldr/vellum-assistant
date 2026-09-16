@@ -46,6 +46,33 @@ export function isLastActivityGroup(
   );
 }
 
+/** Locate the open activity block after pagination shifts numeric indexes. */
+export function resolveActivityGroupIndex(
+  groups: ContentBlockGroup[],
+  groupIndex: number,
+  anchorToolCallId?: string,
+): number | null {
+  if (!anchorToolCallId) {
+    return groups[groupIndex]?.type === "activity" ? groupIndex : null;
+  }
+  const groupContainsAnchor = (candidateIndex: number): boolean => {
+    const candidate = groups[candidateIndex];
+    if (!candidate || candidate.type !== "activity") {
+      return false;
+    }
+    return activityItemsToCardData(candidate.items).toolCalls.some(
+      (toolCall) => toolCall.id === anchorToolCallId,
+    );
+  };
+  if (groupContainsAnchor(groupIndex)) {
+    return groupIndex;
+  }
+  const relocatedIndex = groups.findIndex((_, index) =>
+    groupContainsAnchor(index),
+  );
+  return relocatedIndex === -1 ? null : relocatedIndex;
+}
+
 /**
  * Drop card-backed process calls from a group's card items + tool calls,
  * mirroring the suppression `TranscriptMessageBody` applies before handing a
@@ -103,11 +130,13 @@ export function filterCardBackedProcessCalls(
 export function useLiveActivityGroup(
   messageId: string | undefined,
   groupIndex: number | undefined,
+  anchorToolCallId?: string,
 ): {
   items: ToolCallCardItem[];
   toolCalls: ChatMessageToolCall[];
   isLastGroup: boolean;
   isLatestMessage: boolean;
+  groupIndex: number;
 } | null {
   const message = useTranscriptMessageById(messageId);
   const transcriptMessages = useTranscriptMessages();
@@ -132,7 +161,15 @@ export function useLiveActivityGroup(
       message.contentBlocks ?? [],
       groupOptionsForMessage(message, hideThinkingUi),
     );
-    const group = groups[groupIndex];
+    const resolvedGroupIndex = resolveActivityGroupIndex(
+      groups,
+      groupIndex,
+      anchorToolCallId,
+    );
+    if (resolvedGroupIndex == null) {
+      return null;
+    }
+    const group = groups[resolvedGroupIndex];
     if (!group || group.type !== "activity") {
       return null;
     }
@@ -149,13 +186,15 @@ export function useLiveActivityGroup(
         acpByToolUseId,
         backgroundTaskById,
       }),
-      isLastGroup: isLastActivityGroup(groups, groupIndex),
+      isLastGroup: isLastActivityGroup(groups, resolvedGroupIndex),
       isLatestMessage: transcriptMessages.at(-1) === message,
+      groupIndex: resolvedGroupIndex,
     };
   }, [
     message,
     transcriptMessages,
     groupIndex,
+    anchorToolCallId,
     hideThinkingUi,
     workflowById,
     workflowByToolUseId,
