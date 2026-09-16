@@ -17,7 +17,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
 import type { DisplayMessage } from "@/domains/chat/types/types";
-import type { ToolCallCardItem } from "@/domains/chat/utils/tool-call-card-utils";
+import type {
+  ToolCallCardItem,
+  ToolCallCardStep,
+} from "@/domains/chat/utils/tool-call-card-utils";
 import { toolCallStatusWireFields } from "@/domains/chat/utils/message-test-helpers";
 
 // The viewer store and chat-session-store (pulled in transitively) import the
@@ -430,6 +433,36 @@ describe("ActivityStepsPanel - computer screenshot gallery", () => {
       name: "Preview computer screenshot",
     });
     expect(tile.querySelector("img")?.getAttribute("src")).toContain("AAAA");
+  });
+
+  test("keeps the final image from each multi-image computer-use call", () => {
+    const referenced = computerUseCall("tc-referenced", {
+      imageAttachmentIds: ["att-stale", "att-final"],
+    });
+    const inline = computerUseCall("tc-inline", {
+      imageDataList: ["AAAA", "BBBB"],
+    });
+    const toolStep = (toolCallId: string): ToolCallCardStep => ({
+      kind: "tool",
+      title: "Working",
+      info: toolCallId,
+      activity: "Checking the page",
+      iconName: "monitor",
+      durationLabel: "1s",
+      toolCallId,
+      status: "completed",
+    });
+
+    const gallery = buildActivityScreenshotGallery(
+      [referenced, inline],
+      [toolStep(referenced.id), toolStep(inline.id)],
+    );
+
+    expect(gallery.map((entry) => entry.image.id)).toEqual([
+      "att-final",
+      "tool-image:tc-inline:2",
+    ]);
+    expect(gallery[1]?.image.previewUrl).toBe("data:image/png;base64,BBBB");
   });
 
   test("uses rendered tool order and keeps shared attachment ids as two occurrences", () => {

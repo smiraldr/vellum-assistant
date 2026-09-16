@@ -33,6 +33,7 @@ const { ActivityScreenshotTile } =
 const INLINE: ToolResultImage = {
   id: "tool-image:tc-a:1",
   stripKey: "tool-image:tc-a:1",
+  occurrenceKey: "tc-a:1",
   toolCallId: "tc-a",
   filename: "computer-use-screenshot.png",
   mimeType: "image/png",

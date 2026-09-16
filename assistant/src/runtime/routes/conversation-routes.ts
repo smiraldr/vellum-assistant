@@ -1245,26 +1245,18 @@ export async function handleListMessages({
       if (m.id) {
         const idsToQuery = [m.id, ...mergedMessageIds];
         const linkedRows = getAttachmentMetadataForMessages(idsToQuery);
-        const computerUseScreenshotIdsByMessage = new Map<
-          string,
-          Set<string>
-        >();
+        const computerUseScreenshotIds = new Set(
+          linkedRows.flatMap((row) =>
+            computerUseScreenshotAttachmentIdsFromMetadata(
+              parseMessageMetadata(row.messageMetadata),
+            ),
+          ),
+        );
         const linked = linkedRows.map((row) => {
-          let screenshotIds = computerUseScreenshotIdsByMessage.get(
-            row.messageId,
-          );
-          if (!screenshotIds) {
-            screenshotIds = new Set(
-              computerUseScreenshotAttachmentIdsFromMetadata(
-                parseMessageMetadata(row.messageMetadata),
-              ),
-            );
-            computerUseScreenshotIdsByMessage.set(row.messageId, screenshotIds);
-          }
           return {
             ...row.attachment,
             computerUseScreenshot:
-              screenshotIds.has(row.attachment.id) || undefined,
+              computerUseScreenshotIds.has(row.attachment.id) || undefined,
           };
         });
         if (linked.length > 0) {

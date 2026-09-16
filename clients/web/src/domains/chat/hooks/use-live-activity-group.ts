@@ -20,6 +20,8 @@ import { useHideThinkingUi } from "@/domains/chat/hooks/use-hide-thinking-ui";
 import { useTranscriptMessageById } from "@/domains/chat/hooks/use-transcript-message-by-id";
 import { useTranscriptMessages } from "@/domains/chat/transcript/use-transcript-messages";
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
+import type { DisplayMessage } from "@/domains/chat/types/types";
+import { messageMatchKeys } from "@/domains/chat/utils/message-identity";
 import type { ToolCallCardItem } from "@/domains/chat/utils/tool-call-card-utils";
 
 /**
@@ -44,6 +46,19 @@ export function isLastActivityGroup(
   return (
     groups[groupIndex]?.type === "activity" && groupIndex === groups.length - 1
   );
+}
+
+/** Whether `message` is the transcript's final row by stable message identity. */
+export function isLatestTranscriptMessage(
+  message: DisplayMessage,
+  transcriptMessages: readonly DisplayMessage[],
+): boolean {
+  const latest = transcriptMessages.at(-1);
+  if (!latest) {
+    return false;
+  }
+  const latestKeys = new Set(messageMatchKeys(latest));
+  return messageMatchKeys(message).some((key) => latestKeys.has(key));
 }
 
 /** Locate the open activity block after pagination shifts numeric indexes. */
@@ -187,7 +202,7 @@ export function useLiveActivityGroup(
         backgroundTaskById,
       }),
       isLastGroup: isLastActivityGroup(groups, resolvedGroupIndex),
-      isLatestMessage: transcriptMessages.at(-1) === message,
+      isLatestMessage: isLatestTranscriptMessage(message, transcriptMessages),
       groupIndex: resolvedGroupIndex,
     };
   }, [

@@ -76,6 +76,10 @@ function buildMockContext(
   // attach one (the gate denies, or the context predates the hook).
   ensureHostProxiesForTurn?: () => void,
 ): Conversation {
+  const computerUseModeSessions = {
+    recordAction: () => false,
+    endTask: () => false,
+  } as unknown as Conversation["computerUseModeSessions"];
   const ctx: Conversation = asConversation({
     conversationId: "test-session",
     trustContext:
@@ -105,6 +109,7 @@ function buildMockContext(
     accumulatedSurfaceState: new Map(),
     surfaceActionRequestIds: new Set(),
     currentTurnSurfaces: [],
+    computerUseModeSessions,
     hostCuProxy,
     transportInterface: "web",
     ensureHostProxiesForTurn,

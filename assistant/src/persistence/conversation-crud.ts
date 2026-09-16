@@ -1858,6 +1858,11 @@ function populateForkContentsInProcess(args: PopulateForkContentsArgs): void {
     });
   }
 
+  remapForkWorkspaceAttachmentRefs(
+    messagesToCopy,
+    forkedMessageIds,
+    attachmentIdMap,
+  );
   widenForkAttachmentIdTags(
     messagesToCopy,
     forkedMessageIds,
@@ -1917,20 +1922,88 @@ function populateForkContentsInProcess(args: PopulateForkContentsArgs): void {
 }
 
 /**
+ * Remap copied workspace references to the fork-scoped attachment ids created
+ * by the relink loop.
+ *
+ * The same source attachment can be linked to several copied messages. The
+ * shared map keeps every copied reference and message link on one cloned row,
+ * while references to attachments outside the copied window stay unchanged.
+ */
+function remapForkWorkspaceAttachmentRefs(
+  messagesToCopy: MessageRow[],
+  forkedMessageIds: Map<string, string>,
+  attachmentIdMap: Map<string, string>,
+): void {
+  if (attachmentIdMap.size === 0) {
+    return;
+  }
+
+  const db = getDb();
+  for (const message of messagesToCopy) {
+    const forkedMessageId = forkedMessageIds.get(message.id);
+    if (!forkedMessageId) {
+      continue;
+    }
+
+    const remappedContent = remapWorkspaceAttachmentRefs(
+      message.content,
+      attachmentIdMap,
+    );
+    if (remappedContent === message.content) {
+      continue;
+    }
+
+    db.update(messages)
+      .set({ content: JSON.stringify(remappedContent) })
+      .where(eq(messages.id, forkedMessageId))
+      .run();
+  }
+}
+
+function remapWorkspaceAttachmentRefs(
+  value: unknown,
+  attachmentIdMap: ReadonlyMap<string, string>,
+): unknown {
+  if (Array.isArray(value)) {
+    let changed = false;
+    const remapped = value.map((entry) => {
+      const next = remapWorkspaceAttachmentRefs(entry, attachmentIdMap);
+      changed ||= next !== entry;
+      return next;
+    });
+    return changed ? remapped : value;
+  }
+
+  if (value == null || typeof value !== "object") {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  let changed = false;
+  const remapped: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(record)) {
+    let next = remapWorkspaceAttachmentRefs(entry, attachmentIdMap);
+    if (
+      key === "attachmentId" &&
+      record.type === "workspace_ref" &&
+      typeof entry === "string"
+    ) {
+      next = attachmentIdMap.get(entry) ?? entry;
+    }
+    changed ||= next !== entry;
+    remapped[key] = next;
+  }
+  return changed ? remapped : value;
+}
+
+/**
  * Extend a copied row's attachment-id metadata to name cloned ids alongside
  * the source ids it was written with.
  *
- * A fork leaves its rows describing their attachments two different ways:
- * `messages.content` is copied byte for byte and still names the SOURCE
- * attachment ids, while `message_attachments` is re-linked to freshly CLONED
- * rows under new ids. Readers split along that seam. Content readers match
- * source ids while attachment hydration reads cloned links. A tag naming only
- * one vocabulary goes blind on the other, so it names both.
- *
- * Widening rather than remapping is deliberate: replacing the source ids would
- * fix the compactor's frames by breaking every frame the fork holds directly,
- * which is the common case. Extra ids are inert, since an id no block carries
- * simply never matches.
+ * Copied message content uses the fork-scoped ids, while metadata begins as a
+ * copy of the source row. Naming both ids preserves compatibility with readers
+ * of either vocabulary. Extra ids are inert because an id no block or linked
+ * attachment carries simply never matches.
  *
  * Runs after the attachment loop because that loop is what produces the id map.
  * Only rows that actually carry a tag are rewritten, so an ordinary fork does

@@ -111,10 +111,7 @@ function buildActivityScreenshotGalleryForIds(
   );
   const imageByToolCallId = new Map<string, ToolResultImage>();
   for (const image of projectToolResultImages(toolCalls)) {
-    if (
-      eligibleIds.has(image.toolCallId) &&
-      !imageByToolCallId.has(image.toolCallId)
-    ) {
+    if (eligibleIds.has(image.toolCallId)) {
       imageByToolCallId.set(image.toolCallId, image);
     }
   }

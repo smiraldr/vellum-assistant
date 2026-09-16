@@ -607,7 +607,7 @@ describe("mode-session consolidation boundaries", () => {
     expect(findDisplayTurnEndIndex(rows, 0)).toBe(0);
   });
 
-  test("keeps a differently owned tool result as a display boundary", () => {
+  test("suppresses differently owned tool results without merging across their boundary", () => {
     const assistant = makeMsg(
       "assistant",
       JSON.stringify([{ type: "tool_use", id: "tool-123", name: "test" }]),
@@ -623,15 +623,20 @@ describe("mode-session consolidation boundaries", () => {
         metadata: ownedMetadata({ mode: "browser", id: "session-456" }),
       },
     );
+    const laterToolResult = makeMsg(
+      "user",
+      JSON.stringify([
+        { type: "tool_result", tool_use_id: "tool-123", content: "later" },
+      ]),
+      { id: "result-456", metadata: ownedMetadata() },
+    );
     const merged = mergeToolResultsIntoAssistantMessages([
       assistant,
       toolResult,
+      laterToolResult,
     ]);
-    expect(merged.map((row) => row.id)).toEqual([
-      "assistant-123",
-      "result-123",
-    ]);
-    expect(merged[1]?.content).toEqual(toolResult.content);
+    expect(merged.map((row) => row.id)).toEqual(["assistant-123"]);
+    expect(merged[0]?.content).toEqual(assistant.content);
     expect(findDisplayTurnEndIndex([assistant, toolResult], 0)).toBe(0);
   });
 

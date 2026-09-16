@@ -104,6 +104,12 @@ function browserLifecycle() {
 let mockFindConversationCalls: string[] = [];
 
 mock.module("../../browser/operations.js", () => ({
+  browserOperationLifecycle: (operation: string) =>
+    operation === "status"
+      ? "status"
+      : operation === "close" || operation === "detach"
+        ? "terminal"
+        : "action",
   executeBrowserOperation: async (
     operation: string,
     input: Record<string, unknown>,

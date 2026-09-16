@@ -1,9 +1,14 @@
 import { Loader2 } from "lucide-react";
 import type { FC, MouseEvent } from "react";
 import { useCallback, useMemo } from "react";
+import { resolveComputerUseToolName } from "@vellumai/assistant-api";
 
 import { AttachmentDownloadOverlay } from "@/domains/chat/components/chat-attachments/attachment-download-overlay";
 import { AttachmentPreviewBox } from "@/domains/chat/components/chat-attachments/attachment-preview-box";
+import {
+  ComputerUseScreenshotPreview,
+  type ComputerUseScreenshotTransition,
+} from "@/domains/chat/components/chat-attachments/computer-use-screenshot-preview";
 import { downloadAttachment } from "@/domains/chat/components/chat-attachments/download-attachment";
 import { estimateBase64Bytes } from "@/utils/attachment-utils";
 import { useAttachmentObjectUrl } from "@/domains/chat/components/chat-attachments/use-attachment-object-url";
@@ -180,8 +185,12 @@ function toolResultImageInputs(toolCall: ChatMessageToolCall): {
 export interface ToolResultImage extends DisplayAttachment {
   /** Stable across a mid-turn removal and unique within the strip. */
   stripKey: string;
+  /** Stable for one produced image across inline-to-reference hydration. */
+  occurrenceKey: string;
   /** Producing tool-call occurrence, stable across inline-to-reference swaps. */
   toolCallId: string;
+  /** Resolve canonical filename and MIME metadata before saving this reference. */
+  resolveReferenceMetadata?: boolean;
 }
 
 /**
@@ -200,9 +209,9 @@ export interface ToolResultImage extends DisplayAttachment {
  * Filenames use the server's `<tool-prefix>.<ext>` naming; a tool that emits
  * more than one image additionally gets an index suffix so the names stay
  * distinct (the server keeps same-named attachments apart by id instead).
- * Referenced entries have no wire-carried MIME/size, so they default to a
- * generic image type — the fetched blob supplies the real bytes for preview
- * and download.
+ * Referenced entries have no wire-carried filename, MIME, or size, so their
+ * projected values are display fallbacks. Downloads resolve the canonical
+ * stored metadata before saving the fetched bytes.
  */
 export function projectToolResultImages(
   toolCalls: ChatMessageToolCall[],
@@ -212,10 +221,12 @@ export function projectToolResultImages(
   for (const tc of toolCalls) {
     const { refIds, base64Images } = toolResultImageInputs(tc);
     const total = refIds.length + base64Images.length;
-    const prefix = toolNameToFilePrefix(tc.name);
+    const producingToolName =
+      resolveComputerUseToolName(tc.name, tc.input) ?? tc.name;
+    const prefix = toolNameToFilePrefix(producingToolName);
     let localIndex = 0;
     const nameFor = (ext: string): string => {
-      const base = tc.name ? prefix : `image-${globalIndex}`;
+      const base = producingToolName ? prefix : `image-${globalIndex}`;
       const suffix = total > 1 ? `-${localIndex}` : "";
       return `${base}${suffix}.${ext}`;
     };
@@ -225,11 +236,13 @@ export function projectToolResultImages(
       attachments.push({
         id: attachmentId,
         stripKey: `tool-ref:${tc.id}:${localIndex}`,
+        occurrenceKey: `${tc.id}:${localIndex}`,
         toolCallId: tc.id,
         filename: nameFor("png"),
         mimeType: "image/png",
         sizeBytes: 0,
         previewUrl: null,
+        resolveReferenceMetadata: true,
       });
     });
     base64Images.forEach((imageData) => {
@@ -241,6 +254,7 @@ export function projectToolResultImages(
       attachments.push({
         id: syntheticId,
         stripKey: syntheticId,
+        occurrenceKey: `${tc.id}:${localIndex}`,
         toolCallId: tc.id,
         filename: nameFor(ext),
         mimeType,
@@ -426,6 +440,8 @@ interface ToolResultImagesProps {
    *  {@link embeddedImageFileNames}. An embedded image is presented there. */
   embeddedImageNames?: ReadonlySet<string>;
   assistantId?: string | null;
+  /** Message-scoped transition used only by the selected computer-use image. */
+  computerUseScreenshotTransition?: ComputerUseScreenshotTransition;
 }
 
 /**
@@ -443,6 +459,7 @@ export const ToolResultImages: FC<ToolResultImagesProps> = ({
   messageAttachments,
   embeddedImageNames,
   assistantId,
+  computerUseScreenshotTransition,
 }) => {
   const attachments = useMemo(
     () =>
@@ -479,34 +496,51 @@ export const ToolResultImages: FC<ToolResultImagesProps> = ({
   return (
     <>
       <div className="flex w-full flex-wrap gap-2">
-        {attachments.map((att, index) => (
-          <div
-            key={att.stripKey}
-            role="button"
-            aria-label={att.filename}
-            title={att.filename}
-            tabIndex={0}
-            onClick={() => openPreview(att, index)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                openPreview(att, index);
-              }
-            }}
-            data-reveal-row=""
-            className="group relative w-fit cursor-pointer"
-          >
-            <ToolResultImageThumb attachment={att} assistantId={assistantId} />
-            <AttachmentDownloadOverlay
-              filename={att.filename}
-              onDownload={(e: MouseEvent<HTMLButtonElement>) => {
-                e.stopPropagation();
-                handleDownload(att);
+        {attachments.map((att, index) => {
+          if (
+            computerUseScreenshotTransition?.targetOccurrenceKey ===
+            att.occurrenceKey
+          ) {
+            return (
+              <ComputerUseScreenshotPreview
+                key={att.occurrenceKey}
+                assistantId={assistantId}
+                transition={computerUseScreenshotTransition}
+              />
+            );
+          }
+          return (
+            <div
+              key={att.stripKey}
+              role="button"
+              aria-label={att.filename}
+              title={att.filename}
+              tabIndex={0}
+              onClick={() => openPreview(att, index)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openPreview(att, index);
+                }
               }}
-              className="rounded-md"
-            />
-          </div>
-        ))}
+              data-reveal-row=""
+              className="group relative w-fit cursor-pointer"
+            >
+              <ToolResultImageThumb
+                attachment={att}
+                assistantId={assistantId}
+              />
+              <AttachmentDownloadOverlay
+                filename={att.filename}
+                onDownload={(e: MouseEvent<HTMLButtonElement>) => {
+                  e.stopPropagation();
+                  handleDownload(att);
+                }}
+                className="rounded-md"
+              />
+            </div>
+          );
+        })}
       </div>
       {previewModal}
     </>

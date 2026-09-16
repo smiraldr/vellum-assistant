@@ -322,6 +322,8 @@ export interface EventHandlerState {
   providerErrorProfile: string | null;
   persistProviderErrorAsAssistantMessage: boolean;
   lastAssistantMessageId: string | undefined;
+  /** Assistant rows that must join the turn's final disk-view export. */
+  readonly assistantMessageIdsToSync: Set<string>;
   /**
    * Visibility marker stamped on {@link lastAssistantMessageId}, when the turn
    * routed its reply through `send_user_message`. The turn's terminal
@@ -714,6 +716,7 @@ export function createEventHandlerState(): EventHandlerState {
     providerErrorProfile: null,
     persistProviderErrorAsAssistantMessage: false,
     lastAssistantMessageId: undefined,
+    assistantMessageIdsToSync: new Set(),
     assistantRowAwaitingFinalization: false,
     inflightWriters: new Map(),
     pendingToolResults: new Map(),

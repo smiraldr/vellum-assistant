@@ -72,6 +72,11 @@
     "thinkingTitle": "思考中",
     "viewThinkingAria": "查看思考过程"
   },
+  "computerUseScreenshotPreview": {
+    "unavailable": "最新屏幕截图不可用。",
+    "unavailableShowingPrevious": "最新屏幕截图不可用。正在显示上一张屏幕截图。",
+    "updating": "正在更新屏幕截图..."
+  },
   "addToChatSheet": {
     "camera": "相机",
     "closeAriaLabel": "关闭",

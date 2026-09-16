@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 import { eq, like } from "drizzle-orm";
 
 import {
+  getAttachmentContent,
   getAttachmentsForMessage,
   linkAttachmentToMessage,
   uploadAttachment,
@@ -17,6 +18,7 @@ import {
 import {
   addMessage,
   createConversation,
+  deleteConversation,
   forkConversation,
   getMessages,
   listConversationAttachments,
@@ -755,7 +757,9 @@ describe("forkConversation", () => {
     );
   });
 
-  test("widens automatic screenshot provenance across cloned fork ids", async () => {
+  test("remaps automatic screenshot refs and widens fork provenance", async () => {
+    const screenshotBase64 =
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8/5+hHgAHggJ/PchI7wAAAABJRU5ErkJggg==";
     const source = createConversation("Computer use thread");
     await addMessage(source.id, "user", "Open the example", {
       skipIndexing: true,
@@ -773,6 +777,11 @@ describe("forkConversation", () => {
       ]),
       { skipIndexing: true },
     );
+    const screenshot = await uploadAttachment(
+      "computer-use-click.png",
+      "image/png",
+      screenshotBase64,
+    );
     const toolResult = await addMessage(
       source.id,
       "user",
@@ -787,8 +796,8 @@ describe("forkConversation", () => {
               source: {
                 type: "workspace_ref",
                 media_type: "image/png",
-                attachmentId: "original-image",
-                sizeBytes: 10,
+                attachmentId: screenshot.id,
+                sizeBytes: Buffer.from(screenshotBase64, "base64").byteLength,
               },
             },
           ],
@@ -796,20 +805,7 @@ describe("forkConversation", () => {
       ]),
       { skipIndexing: true },
     );
-    rawRun(
-      "test:insertForkScreenshot",
-      `INSERT INTO attachments
-         (id, original_filename, mime_type, size_bytes, kind, data_base64, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-      "original-image",
-      "computer-use-click.png",
-      "image/png",
-      10,
-      "image",
-      "c2NyZWVuc2hvdA==",
-      Date.now(),
-    );
-    linkAttachmentToMessage(toolResult.id, "original-image", 0);
+    linkAttachmentToMessage(toolResult.id, screenshot.id, 0);
 
     const reply = await addMessage(
       source.id,
@@ -817,7 +813,7 @@ describe("forkConversation", () => {
       JSON.stringify([{ type: "text", text: "Done." }]),
       { skipIndexing: true },
     );
-    linkAttachmentToMessage(reply.id, "original-image", 0);
+    linkAttachmentToMessage(reply.id, screenshot.id, 0);
     const explicit = await uploadAttachment(
       "report.pdf",
       "application/pdf",
@@ -825,7 +821,7 @@ describe("forkConversation", () => {
     );
     linkAttachmentToMessage(reply.id, explicit.id, 1);
     updateMessageMetadata(reply.id, {
-      [COMPUTER_USE_SCREENSHOT_ATTACHMENT_IDS_KEY]: ["original-image"],
+      [COMPUTER_USE_SCREENSHOT_ATTACHMENT_IDS_KEY]: [screenshot.id],
     });
 
     const fork = forkConversation({ conversationId: source.id });
@@ -842,9 +838,6 @@ describe("forkConversation", () => {
     );
     expect(forkToolResult).toBeDefined();
     expect(forkReply).toBeDefined();
-    expect(JSON.stringify(forkToolResult!.content)).toContain(
-      '"attachmentId":"original-image"',
-    );
 
     const forkReplyAttachments = getAttachmentsForMessage(forkReply!.id);
     const clonedScreenshot = forkReplyAttachments.find(
@@ -854,25 +847,63 @@ describe("forkConversation", () => {
       (attachment) => attachment.originalFilename === "report.pdf",
     );
     expect(clonedScreenshot?.id).toBeDefined();
-    expect(clonedScreenshot?.id).not.toBe("original-image");
+    expect(clonedScreenshot?.id).not.toBe(screenshot.id);
     expect(clonedExplicit?.id).toBeDefined();
+    expect(JSON.stringify(forkToolResult!.content)).toContain(
+      `"attachmentId":"${clonedScreenshot!.id}"`,
+    );
+    expect(JSON.stringify(forkToolResult!.content)).not.toContain(
+      `"attachmentId":"${screenshot.id}"`,
+    );
+    const persistedSourceToolResult = getMessages(source.id).find(
+      (row) => row.id === toolResult.id,
+    );
+    expect(JSON.stringify(persistedSourceToolResult?.content)).toContain(
+      `"attachmentId":"${screenshot.id}"`,
+    );
+    expect(JSON.stringify(persistedSourceToolResult?.content)).not.toContain(
+      `"attachmentId":"${clonedScreenshot!.id}"`,
+    );
+    expect(
+      getAttachmentsForMessage(forkToolResult!.id).map(
+        (attachment) => attachment.id,
+      ),
+    ).toEqual([clonedScreenshot!.id]);
+
+    deleteConversation(source.id);
+
+    const forkJsonl = readFileSync(
+      join(getConversationDirPath(fork.id, fork.createdAt), "messages.jsonl"),
+      "utf-8",
+    );
+    expect(forkJsonl).toContain(
+      '"toolResults":[{"content":"Clicked"}],"attachments":["computer-use-click.png"]',
+    );
 
     const forkMarkerIds = computerUseScreenshotAttachmentIdsFromMetadata(
       parseMetadata(forkReply!.metadata) as Record<string, unknown>,
     );
-    expect(forkMarkerIds).toEqual(["original-image", clonedScreenshot!.id]);
+    expect(forkMarkerIds).toEqual([screenshot.id, clonedScreenshot!.id]);
     expect(forkMarkerIds).not.toContain(clonedExplicit!.id);
 
     const history = (await handleListMessages({
       queryParams: { conversationId: fork.id },
     })) as {
       messages: Array<{
+        toolCalls?: Array<{ imageAttachmentIds?: string[] }>;
         attachments: Array<{
           id: string;
           computerUseScreenshot?: boolean;
         }>;
       }>;
     };
+    expect(
+      history.messages.flatMap((message) =>
+        (message.toolCalls ?? []).flatMap(
+          (toolCall) => toolCall.imageAttachmentIds ?? [],
+        ),
+      ),
+    ).toEqual([clonedScreenshot!.id]);
     const hydratedScreenshot = history.messages
       .flatMap((message) => message.attachments)
       .find((attachment) => attachment.id === clonedScreenshot!.id);
@@ -881,6 +912,10 @@ describe("forkConversation", () => {
       .find((attachment) => attachment.id === clonedExplicit!.id);
     expect(hydratedScreenshot?.computerUseScreenshot).toBe(true);
     expect(hydratedExplicit?.computerUseScreenshot).toBeUndefined();
+    expect(getAttachmentContent(screenshot.id)).toBeNull();
+    expect(getAttachmentContent(clonedScreenshot!.id)?.toString("base64")).toBe(
+      screenshotBase64,
+    );
 
     const firstFilesPage = listConversationAttachments(fork.id, {
       limit: 1,

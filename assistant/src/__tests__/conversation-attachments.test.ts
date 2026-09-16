@@ -151,6 +151,7 @@ describe("resolveAssistantAttachments", () => {
     expect(result.emittedAttachments.length).toBe(1);
     const emitted = result.emittedAttachments[0];
     expect(emitted.id).toBeDefined();
+    expect(result.linkedAttachmentIds).toEqual([emitted.id!]);
 
     // All attachments are file-backed and have a file on disk
     const filePath = getFilePathForAttachment(emitted.id!);
@@ -319,6 +320,10 @@ describe("resolveAssistantAttachments", () => {
         sourceType: "sandbox_file",
       },
     ]);
+    expect(result.linkedAttachmentIds).toHaveLength(2);
+    expect(result.linkedAttachmentIds).toEqual(
+      result.emittedAttachments.map((attachment) => attachment.id!),
+    );
   });
 
   test("persistedFiles is empty when there is no message to persist against", async () => {
@@ -368,6 +373,67 @@ describe("resolveAssistantAttachments", () => {
 
     expect(result.emittedAttachments).toHaveLength(1);
     expect(result.persistedFiles).toEqual([]);
+    expect(result.linkedAttachmentIds).toEqual([]);
+  });
+
+  test("reports only successful links when a later upload is skipped", async () => {
+    const conv = createConversation("test-conv-partial-upload");
+    const msg = await addMessage(conv.id, "assistant", "hello");
+    const valid: AssistantAttachmentDraft = {
+      sourceType: "sandbox_file",
+      filename: "valid.txt",
+      mimeType: "text/plain",
+      dataBase64: makeBase64(16),
+      sizeBytes: 16,
+      kind: "document",
+    };
+    const invalid: AssistantAttachmentDraft = {
+      sourceType: "sandbox_file",
+      filename: "invalid.txt",
+      mimeType: "text/plain",
+      dataBase64: "%%%",
+      sizeBytes: 3,
+      kind: "document",
+    };
+
+    mock.module("../daemon/assistant-attachments.js", () => ({
+      resolveDirectives: () =>
+        Promise.resolve({ drafts: [valid, invalid], warnings: [] }),
+      contentBlocksToDrafts: () => [],
+      deduplicateDrafts: (drafts: AssistantAttachmentDraft[]) => drafts,
+      validateDrafts: (drafts: AssistantAttachmentDraft[]) => ({
+        accepted: drafts,
+        warnings: [],
+      }),
+      estimateBase64Bytes,
+      toolImageFilename,
+    }));
+
+    const { resolveAssistantAttachments: resolve } =
+      await import("../daemon/conversation-attachments.js");
+    const result = await resolve(
+      [
+        {
+          source: "sandbox" as const,
+          path: "/fake",
+          filename: "valid.txt",
+          mimeType: "text/plain",
+        },
+      ],
+      [],
+      [],
+      "/tmp",
+      async () => true,
+      msg.id,
+    );
+
+    expect(result.emittedAttachments).toHaveLength(1);
+    expect(result.linkedAttachmentIds).toEqual([
+      result.emittedAttachments[0]!.id!,
+    ]);
+    expect(result.directiveWarnings).toContain(
+      "Attachment invalid.txt skipped: Invalid base64 encoding",
+    );
   });
 });
 

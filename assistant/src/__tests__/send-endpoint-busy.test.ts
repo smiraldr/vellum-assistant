@@ -91,6 +91,7 @@ import {
   bridgeState,
   gatewayGuardianRequestsStoreBridge,
 } from "./helpers/gateway-guardian-requests-store-bridge.js";
+import { mockUnownedModeSessions } from "./helpers/mock-conversation.js";
 
 mock.module(
   "../channels/gateway-guardian-requests.js",
@@ -116,6 +117,7 @@ function makeCompletingConversation(): Conversation {
   let processing = false;
   const messages: unknown[] = [];
   return {
+    modeSessions: mockUnownedModeSessions(),
     isProcessing: () => processing,
     persistUserMessage: (options: { requestId?: string }) => {
       processing = true;
@@ -166,6 +168,7 @@ function makeHangingConversation(): Conversation {
     requestId?: string;
   }> = [];
   return {
+    modeSessions: mockUnownedModeSessions(),
     isProcessing: () => processing,
     persistUserMessage: (options: { requestId?: string }) => {
       processing = true;
@@ -244,6 +247,7 @@ function makePendingApprovalConversation(
   });
 
   const conversation = {
+    modeSessions: mockUnownedModeSessions(),
     isProcessing: () => processing,
     persistUserMessage: (options: { requestId?: string }) => ({
       id: options.requestId ?? "msg-1",

@@ -12,6 +12,7 @@ const EMPTY_IMAGE_NAMES: ReadonlySet<string> = new Set();
 
 export interface TranscriptImagePresentation {
   imagesByToolCallId: ReadonlyMap<string, ToolResultImage[]>;
+  selectedComputerUseImage?: ToolResultImage;
   visibleAttachments: DisplayAttachment[];
 }
 
@@ -91,5 +92,9 @@ export function deriveTranscriptImagePresentation(
       )
     : [...attachments];
 
-  return { imagesByToolCallId, visibleAttachments };
+  return {
+    imagesByToolCallId,
+    selectedComputerUseImage,
+    visibleAttachments,
+  };
 }

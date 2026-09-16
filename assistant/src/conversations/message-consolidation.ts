@@ -273,11 +273,10 @@ export function mergeToolResultsIntoAssistantMessages(
     // System notices don't count as real user content — they are only
     // injected alongside tool results in the agent loop.
     const realUserContent = otherBlocks.filter((b) => !isSystemNoticeText(b));
-    if (!canMerge) {
-      result.push(msg);
-      lastAssistantIdx = -1;
-    } else if (realUserContent.length > 0) {
+    if (realUserContent.length > 0) {
       result.push({ ...msg, content: otherBlocks });
+    }
+    if (!canMerge || realUserContent.length > 0) {
       lastAssistantIdx = -1;
     }
     // else: tool-result-only → suppressed

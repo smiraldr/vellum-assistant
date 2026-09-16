@@ -20,6 +20,7 @@ import { resolveAttachmentFilename } from "@vellumai/service-contracts/attachmen
 
 import { downloadAttachment } from "@/domains/chat/components/chat-attachments/download-attachment";
 import { MessageAttachments } from "@/domains/chat/components/chat-attachments/message-attachments";
+import { useComputerUseScreenshotTransition } from "@/domains/chat/components/chat-attachments/computer-use-screenshot-preview";
 import {
   embeddedImageFileNames,
   ToolResultImages,
@@ -247,6 +248,13 @@ export function TranscriptMessageBody({
     [orderedMessageToolCalls, message.attachments, embeddedImageNames],
   );
   const visibleAssistantAttachments = imagePresentation.visibleAttachments;
+  const screenshotTransition = useComputerUseScreenshotTransition({
+    assistantId,
+    scopeKey:
+      message.id ??
+      `anonymous-assistant-message:${message.timestamp ?? "unknown"}`,
+    target: imagePresentation.selectedComputerUseImage,
+  });
   const selectedImagesByGroupIndex = groups.map((group) => {
     if (group.type !== "activity") {
       return [];
@@ -843,6 +851,16 @@ export function TranscriptMessageBody({
       toolCalls={toolCalls}
       resolvedImages={selectedImagesByGroupIndex[groupIndex]}
       assistantId={assistantId}
+      computerUseScreenshotTransition={
+        imagePresentation.selectedComputerUseImage &&
+        toolCalls.some(
+          (toolCall) =>
+            toolCall.id ===
+            imagePresentation.selectedComputerUseImage?.toolCallId,
+        )
+          ? screenshotTransition
+          : undefined
+      }
     />
   );
 
@@ -996,8 +1014,7 @@ export function TranscriptMessageBody({
     items: Array<{ kind: "text" | "nonText"; node: ReactNode }>,
   ): ReactNode => {
     type Slot =
-      | { kind: "bubble"; nodes: ReactNode[] }
-      | { kind: "raw"; node: ReactNode };
+      { kind: "bubble"; nodes: ReactNode[] } | { kind: "raw"; node: ReactNode };
     const slots: Slot[] = [];
     let textRun: ReactNode[] = [];
 
@@ -1437,6 +1454,7 @@ export function TranscriptMessageBody({
         {trailer}
       </div>
       {vellumFileModal}
+      {screenshotTransition.previewModal}
       {isTouch && !isAssistant && (
         <div onClick={(e) => e.stopPropagation()}>
           <MessageLongPressActions

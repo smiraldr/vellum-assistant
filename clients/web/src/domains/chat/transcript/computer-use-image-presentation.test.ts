@@ -61,6 +61,11 @@ describe("deriveTranscriptImagePresentation", () => {
     expect(
       imagesFor(presentation, "cu-selected").map((image) => image.id),
     ).toEqual(["shot-selected-2"]);
+    expect(presentation.selectedComputerUseImage).toMatchObject({
+      id: "shot-selected-2",
+      occurrenceKey: "cu-selected:2",
+      toolCallId: "cu-selected",
+    });
     expect(imagesFor(presentation, "cu-pending")).toEqual([]);
     expect(
       imagesFor(presentation, "ordinary-later").map((image) => image.id),
@@ -179,7 +184,7 @@ describe("deriveTranscriptImagePresentation", () => {
     );
 
     expect(imagesFor(presentation, "cu")[0]?.filename).toBe(
-      "skill-execute.png",
+      "computer-use-click.png",
     );
     expect(imagesFor(presentation, "ordinary-unnamed")[0]?.filename).toBe(
       "image-2.png",
