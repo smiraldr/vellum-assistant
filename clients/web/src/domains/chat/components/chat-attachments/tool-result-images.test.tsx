@@ -12,6 +12,7 @@ import type { ReactElement } from "react";
 import * as daemonSdk from "@/generated/daemon/sdk.gen";
 import { mockAttachmentPreviewModal } from "@/domains/chat/components/chat-attachments/attachment-test-helpers";
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
+import type { ToolResultImage } from "@/domains/chat/components/chat-attachments/tool-result-images";
 import type { DisplayAttachment } from "@/types/attachment-types";
 
 type ContentResult = { data: Blob | null; error: { message: string } | null };
@@ -69,6 +70,7 @@ const { projectToolResultImages, resolveToolResultImages } = imagesModule;
 
 interface StripOptions {
   messageAttachments?: DisplayAttachment[];
+  resolvedImages?: ToolResultImage[];
   assistantId?: string | null;
   /** Share one client across re-renders so a survivor keeps its cached blob. */
   client?: QueryClient;
@@ -87,6 +89,7 @@ function stripUi(
       <ToolResultImages
         toolCalls={toolCalls}
         messageAttachments={opts.messageAttachments}
+        resolvedImages={opts.resolvedImages}
         assistantId={assistantId}
       />
     </QueryClientProvider>
@@ -119,6 +122,48 @@ afterAll(() => {
 });
 
 describe("ToolResultImages referenced media", () => {
+  test("uses a supplied message-wide image selection", () => {
+    const calls: ChatMessageToolCall[] = [
+      {
+        id: "tc-first",
+        name: "computer_use_screenshot",
+        input: {},
+        imageDataList: ["first"],
+      },
+      {
+        id: "tc-selected",
+        name: "computer_use_screenshot",
+        input: {},
+        imageDataList: ["selected"],
+      },
+    ];
+    const selected = projectToolResultImages([calls[1]!]);
+
+    renderStrip(calls, { resolvedImages: selected });
+
+    const images = screen.getAllByTestId("tool-result-image");
+    expect(images).toHaveLength(1);
+    expect(images[0]!.getAttribute("src")).toBe(
+      "data:image/png;base64,selected",
+    );
+  });
+
+  test("keeps an explicit empty message-wide selection empty", () => {
+    renderStrip(
+      [
+        {
+          id: "tc-image",
+          name: "computer_use_screenshot",
+          input: {},
+          imageDataList: ["image"],
+        },
+      ],
+      { resolvedImages: [] },
+    );
+
+    expect(screen.queryByTestId("tool-result-image")).toBeNull();
+  });
+
   test("renders inline base64 images without hitting the daemon", () => {
     const toolCall: ChatMessageToolCall = {
       id: "tc-b64",

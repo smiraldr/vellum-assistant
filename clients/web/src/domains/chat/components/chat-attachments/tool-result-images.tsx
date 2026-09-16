@@ -415,6 +415,9 @@ const ReferencedToolResultImage: FC<{
 
 interface ToolResultImagesProps {
   toolCalls: ChatMessageToolCall[];
+  /** Images selected by a message-wide presentation. An explicit empty list
+   *  suppresses the component's default per-group resolution. */
+  resolvedImages?: ToolResultImage[];
   /** The message's end-of-turn attachments, which render their own interactive
    *  chips below the body. An image already shown there is dropped from this
    *  strip. See {@link resolveToolResultImages} for how the two are matched. */
@@ -436,18 +439,20 @@ interface ToolResultImagesProps {
  */
 export const ToolResultImages: FC<ToolResultImagesProps> = ({
   toolCalls,
+  resolvedImages,
   messageAttachments,
   embeddedImageNames,
   assistantId,
 }) => {
   const attachments = useMemo(
     () =>
+      resolvedImages ??
       resolveToolResultImages(
         toolCalls,
         messageAttachments,
         embeddedImageNames,
       ),
-    [toolCalls, messageAttachments, embeddedImageNames],
+    [resolvedImages, toolCalls, messageAttachments, embeddedImageNames],
   );
   const { openPreview, previewModal } = useAttachmentPreview(
     assistantId,

@@ -5,6 +5,9 @@ import { useAttachmentSquares } from "@/domains/chat/components/chat-attachments
 
 interface MessageAttachmentsProps {
   attachments: DisplayAttachment[];
+  /** Canonical files shown in the Files panel when the visible strip is a
+   * filtered presentation of the message attachments. */
+  panelAttachments?: DisplayAttachment[];
   /** Forwarded to {@link AttachmentPreviewModal} so it can lazily fetch
    *  attachment content when `previewUrl` is missing. */
   assistantId?: string | null;
@@ -31,6 +34,7 @@ const VISIBLE_LIMIT = 5;
  */
 export function MessageAttachments({
   attachments,
+  panelAttachments = attachments,
   assistantId,
   messageId,
 }: MessageAttachmentsProps) {
@@ -51,7 +55,11 @@ export function MessageAttachments({
         {overflowCount > 0 && (
           <AttachmentOverflowSquare
             count={overflowCount}
-            payload={{ messageId, attachments, assistantId }}
+            payload={{
+              messageId,
+              attachments: panelAttachments,
+              assistantId,
+            }}
           />
         )}
       </div>

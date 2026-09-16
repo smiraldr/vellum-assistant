@@ -147,6 +147,38 @@ describe("MessageAttachments", () => {
     expect(queryByTestId("preview-modal")).toBeNull();
   });
 
+  test("keeps the visible strip separate from the canonical Files payload", () => {
+    const visibleAttachments = makeImageAttachments(6);
+    const automaticScreenshot = makeDisplayAttachment({
+      id: "automatic-screenshot",
+      computerUseScreenshot: true,
+    });
+    const panelAttachments = [...visibleAttachments, automaticScreenshot];
+    const { container, getByLabelText, getByRole, getByTestId, getByText } =
+      render(
+        <MessageAttachments
+          attachments={visibleAttachments}
+          panelAttachments={panelAttachments}
+          messageId="msg-1"
+        />,
+      );
+
+    expect(squareLabels(container)).toHaveLength(5);
+    expect(getByText("+1")).toBeTruthy();
+
+    fireEvent.click(getByLabelText("photo-0.png"));
+    expect(
+      getByTestId("preview-modal").getAttribute("data-sibling-count"),
+    ).toBe("6");
+
+    fireEvent.click(getByRole("button", { name: "Show all files (1 more)" }));
+    expect(
+      useViewerStore
+        .getState()
+        .activeMessageFiles?.attachments.map((candidate) => candidate.id),
+    ).toEqual(panelAttachments.map((candidate) => candidate.id));
+  });
+
   test("the overflow tile reports its expanded state", () => {
     const { getByRole } = render(
       <MessageAttachments
@@ -183,5 +215,18 @@ describe("MessageAttachments", () => {
       <MessageAttachments attachments={[]} messageId="msg-1" />,
     );
     expect(container.innerHTML).toBe("");
+  });
+
+  test("returns null when only the canonical Files payload has attachments", () => {
+    const { container } = render(
+      <MessageAttachments
+        attachments={[]}
+        panelAttachments={makeImageAttachments(1)}
+        messageId="msg-1"
+      />,
+    );
+
+    expect(container.innerHTML).toBe("");
+    expect(useViewerStore.getState().activeMessageFiles).toBeNull();
   });
 });
