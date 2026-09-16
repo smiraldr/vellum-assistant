@@ -14,6 +14,7 @@ import {
 import type { LoopToolExecutor } from "../agent/loop.js";
 import type { AssistantEvent } from "../api/index.js";
 import { stripInjectionsForCompaction } from "../context/strip-injections.js";
+import type { AttachmentResolutionResult } from "../daemon/conversation-attachments.js";
 import {
   queueConversationNotice,
   resetConversationNoticesForTests,
@@ -580,12 +581,15 @@ mock.module("../daemon/conversation-usage.js", () => ({
   recordUsage: recordUsageMock,
 }));
 
-const resolveAssistantAttachmentsMock = mock(async () => ({
-  assistantAttachments: [],
-  emittedAttachments: [],
-  directiveWarnings: [],
-  persistedFiles: [],
-}));
+const resolveAssistantAttachmentsMock = mock(
+  async (): Promise<AttachmentResolutionResult> => ({
+    assistantAttachments: [],
+    emittedAttachments: [],
+    directiveWarnings: [],
+    persistedFiles: [],
+    computerUseScreenshotAttachmentIds: [],
+  }),
+);
 mock.module("../daemon/conversation-attachments.js", () => ({
   resolveAssistantAttachments: resolveAssistantAttachmentsMock,
   approveHostAttachmentRead: async () => true,
@@ -1038,6 +1042,7 @@ beforeEach(() => {
     emittedAttachments: [],
     directiveWarnings: [],
     persistedFiles: [],
+    computerUseScreenshotAttachmentIds: [],
   }));
   mockMessageById = null;
   resetConversationNoticesForTests();
@@ -1698,6 +1703,36 @@ describe("session-agent-loop", () => {
       const complete = events.find((e) => e.type === "message_complete");
       expect(complete).toBeDefined();
     });
+
+    test("carries automatic screenshot provenance on message completion", async () => {
+      resolveAssistantAttachmentsMock.mockImplementation(async () => ({
+        assistantAttachments: [],
+        emittedAttachments: [
+          {
+            id: "screenshot-1",
+            filename: "computer-use-click.png",
+            mimeType: "image/png",
+            data: "c2NyZWVuc2hvdA==",
+            sourceType: "tool_block" as const,
+            computerUseScreenshot: true,
+          },
+        ],
+        directiveWarnings: [],
+        persistedFiles: [],
+        computerUseScreenshotAttachmentIds: ["screenshot-1"],
+      }));
+      const events: AssistantEvent[] = [];
+      const ctx = makeCtx({ providerResponses: [textResponse("Done")] });
+
+      await runAgentLoopImpl(ctx, "click it", "msg-1", (event) =>
+        events.push(event),
+      );
+
+      const complete = events.find(
+        (event) => event.type === "message_complete",
+      );
+      expect(complete?.attachments?.[0]?.computerUseScreenshot).toBe(true);
+    });
   });
 
   describe("LLM request log persistence", () => {
@@ -2170,6 +2205,47 @@ describe("session-agent-loop", () => {
         "test-conv",
         "checkpoint_handoff",
       );
+    });
+
+    test("carries automatic screenshot provenance on generation handoff", async () => {
+      resolveAssistantAttachmentsMock.mockImplementation(async () => ({
+        assistantAttachments: [],
+        emittedAttachments: [
+          {
+            id: "screenshot-1",
+            filename: "computer-use-click.png",
+            mimeType: "image/png",
+            data: "c2NyZWVuc2hvdA==",
+            sourceType: "tool_block" as const,
+            computerUseScreenshot: true,
+          },
+        ],
+        directiveWarnings: [],
+        persistedFiles: [],
+        computerUseScreenshotAttachmentIds: ["screenshot-1"],
+      }));
+      const events: AssistantEvent[] = [];
+      const ctx = makeCtx({
+        providerResponses: [toolUseResponse("tu-1", "file_read", {})],
+        loopTools: [
+          {
+            name: "file_read",
+            description: "Read a file",
+            input_schema: { type: "object", properties: {} },
+          },
+        ],
+        toolExecutor: async () => ({ content: "content", isError: false }),
+        canHandoffAtCheckpoint: () => true,
+      });
+
+      await runAgentLoopImpl(ctx, "hello", "msg-1", (event) =>
+        events.push(event),
+      );
+
+      const handoff = events.find(
+        (event) => event.type === "generation_handoff",
+      );
+      expect(handoff?.attachments?.[0]?.computerUseScreenshot).toBe(true);
     });
 
     test("continues when canHandoffAtCheckpoint returns false", async () => {

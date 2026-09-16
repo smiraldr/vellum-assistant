@@ -620,6 +620,15 @@ subgraph "Text Q&A Session"
     classDef provider fill:#ef5350,stroke:#c62828,color:#fff
 ```
 
+Computer-use screenshots are materialized as canonical attachment rows while
+their tool-result messages are finalized. Every screenshot keeps that
+tool-result link. At turn completion, only the last screenshot-bearing
+computer-use invocation also links its attachment to the actual reply row.
+That reply link is what Files and channel delivery consume. The reply row
+stores the accepted automatic attachment ID in metadata, and history plus
+terminal events project it as `computerUseScreenshot: true`. Forks retain the
+source ID and add the cloned reply attachment ID to that metadata.
+
 ## Assistant Feature Flags
 
 All feature flags (assistant-scoped and client-scoped) are declared in the unified registry at `meta/feature-flags/feature-flag-registry.json`. Each entry has `id`, `scope`, `key`, `label`, `description`, and `defaultEnabled`. Flags are scoped: `assistant` flags gate daemon behavior via the gateway API, while `client` flags control client-side UI behavior stored in UserDefaults.
