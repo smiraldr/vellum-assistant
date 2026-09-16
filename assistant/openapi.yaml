@@ -20988,6 +20988,8 @@ paths:
                                 type: string
                               fileBacked:
                                 type: boolean
+                              computerUseScreenshot:
+                                type: boolean
                             required:
                               - id
                               - filename
@@ -21994,6 +21996,8 @@ paths:
                                       thumbnailData:
                                         type: string
                                       fileBacked:
+                                        type: boolean
+                                      computerUseScreenshot:
                                         type: boolean
                                     required:
                                       - id

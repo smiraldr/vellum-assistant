@@ -12,6 +12,7 @@ import type { ReactElement } from "react";
 import * as daemonSdk from "@/generated/daemon/sdk.gen";
 import { mockAttachmentPreviewModal } from "@/domains/chat/components/chat-attachments/attachment-test-helpers";
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
+import type { ToolResultImage } from "@/domains/chat/components/chat-attachments/tool-result-images";
 import type { DisplayAttachment } from "@/types/attachment-types";
 
 type ContentResult = { data: Blob | null; error: { message: string } | null };
@@ -65,9 +66,11 @@ const restorePreviewModal = mockAttachmentPreviewModal();
 const imagesModule =
   await import("@/domains/chat/components/chat-attachments/tool-result-images");
 const { ToolResultImages } = imagesModule;
+const { projectToolResultImages, resolveToolResultImages } = imagesModule;
 
 interface StripOptions {
   messageAttachments?: DisplayAttachment[];
+  resolvedImages?: ToolResultImage[];
   assistantId?: string | null;
   /** Share one client across re-renders so a survivor keeps its cached blob. */
   client?: QueryClient;
@@ -86,6 +89,7 @@ function stripUi(
       <ToolResultImages
         toolCalls={toolCalls}
         messageAttachments={opts.messageAttachments}
+        resolvedImages={opts.resolvedImages}
         assistantId={assistantId}
       />
     </QueryClientProvider>
@@ -118,6 +122,48 @@ afterAll(() => {
 });
 
 describe("ToolResultImages referenced media", () => {
+  test("uses a supplied message-wide image selection", () => {
+    const calls: ChatMessageToolCall[] = [
+      {
+        id: "tc-first",
+        name: "computer_use_screenshot",
+        input: {},
+        imageDataList: ["first"],
+      },
+      {
+        id: "tc-selected",
+        name: "computer_use_screenshot",
+        input: {},
+        imageDataList: ["selected"],
+      },
+    ];
+    const selected = projectToolResultImages([calls[1]!]);
+
+    renderStrip(calls, { resolvedImages: selected });
+
+    const images = screen.getAllByTestId("tool-result-image");
+    expect(images).toHaveLength(1);
+    expect(images[0]!.getAttribute("src")).toBe(
+      "data:image/png;base64,selected",
+    );
+  });
+
+  test("keeps an explicit empty message-wide selection empty", () => {
+    renderStrip(
+      [
+        {
+          id: "tc-image",
+          name: "computer_use_screenshot",
+          input: {},
+          imageDataList: ["image"],
+        },
+      ],
+      { resolvedImages: [] },
+    );
+
+    expect(screen.queryByTestId("tool-result-image")).toBeNull();
+  });
+
   test("renders inline base64 images without hitting the daemon", () => {
     const toolCall: ChatMessageToolCall = {
       id: "tc-b64",
@@ -339,6 +385,68 @@ describe("ToolResultImages referenced media", () => {
       screen.queryByTestId("tool-result-image") ??
         screen.queryByTestId("tool-result-image-placeholder"),
     ).not.toBeNull();
+  });
+});
+
+describe("projectToolResultImages", () => {
+  test("keeps tool-call occurrence identity on inline and referenced images", () => {
+    const inline: ChatMessageToolCall = {
+      id: "tc-inline",
+      name: "computer_use_screenshot",
+      input: {},
+      imageDataList: ["AAAA"],
+    };
+    const referenced: ChatMessageToolCall = {
+      ...inline,
+      imageDataList: undefined,
+      imageAttachmentIds: ["att-1"],
+    };
+
+    expect(projectToolResultImages([inline])[0]?.toolCallId).toBe("tc-inline");
+    expect(projectToolResultImages([referenced])[0]?.toolCallId).toBe(
+      "tc-inline",
+    );
+  });
+
+  test("retains raw images before markdown and reply-attachment suppression", () => {
+    const toolCall: ChatMessageToolCall = {
+      id: "tc-raw",
+      name: "computer_use_screenshot",
+      input: {},
+      result: "Saved /workspace/frame.png",
+      imageAttachmentIds: ["att-shared"],
+    };
+    const attachment: DisplayAttachment = {
+      id: "att-shared",
+      filename: "frame.png",
+      mimeType: "image/png",
+      sizeBytes: 1,
+      previewUrl: null,
+    };
+
+    expect(projectToolResultImages([toolCall])).toHaveLength(1);
+    expect(
+      resolveToolResultImages([toolCall], [attachment], new Set(["frame.png"])),
+    ).toHaveLength(0);
+  });
+
+  test("keeps two calls sharing one attachment as distinct occurrences", () => {
+    const calls: ChatMessageToolCall[] = ["tc-a", "tc-b"].map((id) => ({
+      id,
+      name: "computer_use_screenshot",
+      input: {},
+      imageAttachmentIds: ["att-shared"],
+    }));
+
+    expect(
+      projectToolResultImages(calls).map((image) => [
+        image.id,
+        image.toolCallId,
+      ]),
+    ).toEqual([
+      ["att-shared", "tc-a"],
+      ["att-shared", "tc-b"],
+    ]);
   });
 });
 

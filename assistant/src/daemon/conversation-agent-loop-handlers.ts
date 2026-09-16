@@ -12,6 +12,7 @@ import { v4 as uuid } from "uuid";
 
 import { onActivationToolCall } from "../activation/turn-hooks.js";
 import type { AgentEvent } from "../agent/loop.js";
+import { resolveComputerUseToolName } from "../api/computer-use-tool.js";
 import type { AnsweredQuestion } from "../api/events/question-answered.js";
 import type { AssistantEvent } from "../api/index.js";
 import type {
@@ -365,6 +366,12 @@ export interface EventHandlerState {
   readonly accumulatedToolContentBlocks: ContentBlock[];
   /** Maps index in accumulatedToolContentBlocks → tool name that produced it. */
   readonly toolContentBlockToolNames: Map<number, string>;
+  /** Supported computer-use calls in model invocation order for this run. */
+  readonly computerUseToolUseIds: string[];
+  /** Tool names for supported computer-use ids, also used for persisted names. */
+  readonly computerUseToolNames: Map<string, string>;
+  /** Latest screenshot block for each supported invocation. */
+  readonly computerUseScreenshotBlocks: Map<string, ImageContent>;
   readonly directiveWarnings: string[];
   readonly toolUseIdToName: Map<string, string>;
   /** Sticky for the whole run: this turn created/refreshed an app. */
@@ -715,6 +722,9 @@ export function createEventHandlerState(): EventHandlerState {
     accumulatedDirectives: [],
     accumulatedToolContentBlocks: [],
     toolContentBlockToolNames: new Map(),
+    computerUseToolUseIds: [],
+    computerUseToolNames: new Map(),
+    computerUseScreenshotBlocks: new Map(),
     directiveWarnings: [],
     toolUseIdToName: new Map(),
     appBuildToolUsedThisRun: false,
@@ -757,6 +767,26 @@ export function createEventHandlerState(): EventHandlerState {
     surfacePendingScannedToolUseIds: new Set(),
     liveRevealGuardPriming: undefined,
   };
+}
+
+/** Select the last screenshot-bearing computer-use call by invocation order. */
+export function selectFinalComputerUseScreenshotCandidate(
+  state: Pick<
+    EventHandlerState,
+    | "computerUseToolUseIds"
+    | "computerUseToolNames"
+    | "computerUseScreenshotBlocks"
+  >,
+): { toolName: string; block: ImageContent } | undefined {
+  for (let i = state.computerUseToolUseIds.length - 1; i >= 0; i--) {
+    const toolUseId = state.computerUseToolUseIds[i]!;
+    const block = state.computerUseScreenshotBlocks.get(toolUseId);
+    const toolName = state.computerUseToolNames.get(toolUseId);
+    if (block && toolName) {
+      return { toolName, block };
+    }
+  }
+  return undefined;
 }
 
 /**
@@ -1761,6 +1791,14 @@ export function handleToolUse(
   event: Extract<AgentEvent, { type: "tool_use" }>,
 ): void {
   state.toolUseIdToName.set(event.id, event.name);
+  const computerUseToolName = resolveComputerUseToolName(
+    event.name,
+    event.input,
+  );
+  if (computerUseToolName) {
+    state.computerUseToolUseIds.push(event.id);
+    state.computerUseToolNames.set(event.id, computerUseToolName);
+  }
   // Activation checklist: keep the launched task's live step count moving.
   // Fire-and-forget and throttled inside the hook; a no-op for every
   // conversation no activation task points at.
@@ -2233,16 +2271,41 @@ export async function finalizePendingToolResultRow(
     state.pendingToolResults,
     await resolvedRevealCandidatesForState(state),
   );
-  const contentJson = JSON.stringify(
+  const referencedBlocks =
     conv != null
       ? await referenceMediaBlocksForPersist(
           conversationId,
           conv.createdAt,
           rowId,
           blocks as ContentBlock[],
+          state.computerUseToolNames,
         )
-      : blocks,
-  );
+      : blocks;
+  for (const block of referencedBlocks) {
+    // guard:allow-tool-result-only: locally-executed tool results carry rich
+    // contentBlocks and pending computer-use state; provider web-search
+    // results carry opaque content and never enter the local pending-tool map.
+    if (block.type !== "tool_result") {
+      continue;
+    }
+    const pending = state.pendingToolResults.get(block.tool_use_id);
+    if (pending && block.contentBlocks) {
+      pending.contentBlocks = block.contentBlocks;
+    }
+    if (!state.computerUseToolNames.has(block.tool_use_id)) {
+      continue;
+    }
+    const screenshot = block.contentBlocks
+      ?.filter(
+        (contentBlock): contentBlock is ImageContent =>
+          contentBlock.type === "image",
+      )
+      .at(-1);
+    if (screenshot) {
+      state.computerUseScreenshotBlocks.set(block.tool_use_id, screenshot);
+    }
+  }
+  const contentJson = JSON.stringify(referencedBlocks);
   const toolRowFinalized = await finalizeInflightContent(
     state.inflightWriters.get(rowId),
     rowId,
@@ -2528,8 +2591,13 @@ export async function handleToolResult(
     deps.ctx.markWorkspaceTopLevelDirty();
   }
 
+  const computerUseCall = state.computerUseToolNames.has(event.toolUseId);
   if (event.contentBlocks) {
     for (const cb of event.contentBlocks) {
+      if (computerUseCall && cb.type === "image") {
+        state.computerUseScreenshotBlocks.set(event.toolUseId, cb);
+        continue;
+      }
       if (cb.type === "image" || cb.type === "file") {
         state.accumulatedToolContentBlocks.push(cb);
         if (toolName) {

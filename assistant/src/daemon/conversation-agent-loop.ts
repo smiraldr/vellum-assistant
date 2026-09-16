@@ -55,6 +55,7 @@ import {
   updateConversationSlackContextWatermark,
   updateMessageMetadata,
 } from "../persistence/conversation-crud.js";
+import { syncMessageToDisk } from "../persistence/conversation-disk-view.js";
 import { isReplaceableTitle } from "../persistence/conversation-title-service.js";
 import { NO_RESPONSE_MESSAGE_KIND } from "../persistence/conversation-types.js";
 import {
@@ -105,6 +106,7 @@ import {
   type EventHandlerDeps,
   finalizePendingToolResultRow,
   resetInjectionLedgersForStrip,
+  selectFinalComputerUseScreenshotCandidate,
   settlePendingPartialFlush,
 } from "./conversation-agent-loop-handlers.js";
 import {
@@ -1949,6 +1951,8 @@ export async function runAgentLoopImpl(
               state.lastAssistantMessageId,
             )
           : state.lastAssistantMessageId;
+      const computerUseScreenshotCandidate =
+        selectFinalComputerUseScreenshotCandidate(state);
       // Resolve attachments (only when not cancelled, this is expensive async I/O)
       const attachmentResult = await resolveAssistantAttachments(
         state.accumulatedDirectives,
@@ -1965,9 +1969,23 @@ export async function runAgentLoopImpl(
           ),
         attachmentTargetMessageId,
         state.toolContentBlockToolNames,
+        computerUseScreenshotCandidate,
       );
       const { assistantAttachments, emittedAttachments } = attachmentResult;
       persistedAttachmentFiles = attachmentResult.persistedFiles;
+      if (
+        attachmentTargetMessageId &&
+        attachmentResult.computerUseScreenshotAttachmentIds.length > 0
+      ) {
+        const conversation = getConversation(ctx.conversationId);
+        if (conversation) {
+          syncMessageToDisk(
+            ctx.conversationId,
+            attachmentTargetMessageId,
+            conversation.createdAt,
+          );
+        }
+      }
 
       ctx.lastAssistantAttachments = assistantAttachments;
       ctx.lastAttachmentWarnings = attachmentResult.directiveWarnings;

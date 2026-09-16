@@ -2,6 +2,7 @@ import {
   isNoResponseOnlyText,
   isPotentialNoResponsePrefix,
 } from "@vellumai/service-contracts/no-response";
+import { isComputerUseToolCall } from "@vellumai/assistant-api";
 import {
   Fragment,
   type MouseEvent as ReactMouseEvent,
@@ -21,9 +22,9 @@ import { downloadAttachment } from "@/domains/chat/components/chat-attachments/d
 import { MessageAttachments } from "@/domains/chat/components/chat-attachments/message-attachments";
 import {
   embeddedImageFileNames,
-  resolveToolResultImages,
   ToolResultImages,
 } from "@/domains/chat/components/chat-attachments/tool-result-images";
+import { deriveTranscriptImagePresentation } from "@/domains/chat/transcript/computer-use-image-presentation";
 import { ChatMarkdownMessage } from "@/domains/chat/components/chat-markdown-message";
 import {
   VellumFileActionModal,
@@ -187,7 +188,7 @@ export function TranscriptMessageBody({
   const hideThinkingUi = useHideThinkingUi();
   const hidesThinking =
     hideThinkingUi || message.assistantTextVisibility === "private";
-  const hasAttachments =
+  const hasCanonicalAttachments =
     !isStandaloneFrameGroup && Boolean(message.attachments?.length);
   // Gated on the transcript owner: an older daemon neutralizes nothing, so
   // sentinel-shaped text in its transcripts must never chip-ify, and only the
@@ -200,6 +201,17 @@ export function TranscriptMessageBody({
   const groups = groupContentBlocks(
     isStandaloneFrameGroup ? [] : (message.contentBlocks ?? []),
     groupOptionsForMessage(message, hideThinkingUi),
+  );
+  const orderedMessageToolCalls = useMemo(
+    () =>
+      message.contentBlocks !== undefined
+        ? message.contentBlocks.flatMap((block) =>
+            block.type === "tool_use" && block.toolCall.id !== undefined
+              ? [{ ...block.toolCall, id: block.toolCall.id }]
+              : [],
+          )
+        : (message.toolCalls ?? []),
+    [message.contentBlocks, message.toolCalls],
   );
 
   // Only the trailing text group of a streaming assistant message is still
@@ -225,6 +237,25 @@ export function TranscriptMessageBody({
     () => embeddedImageFileNames(message.contentBlocks),
     [message.contentBlocks],
   );
+  const imagePresentation = useMemo(
+    () =>
+      deriveTranscriptImagePresentation(
+        orderedMessageToolCalls,
+        message.attachments,
+        embeddedImageNames,
+      ),
+    [orderedMessageToolCalls, message.attachments, embeddedImageNames],
+  );
+  const visibleAssistantAttachments = imagePresentation.visibleAttachments;
+  const selectedImagesByGroupIndex = groups.map((group) => {
+    if (group.type !== "activity") {
+      return [];
+    }
+    const { toolCalls } = activityItemsToCardData(group.items);
+    return toolCalls.flatMap(
+      (toolCall) => imagePresentation.imagesByToolCallId.get(toolCall.id) ?? [],
+    );
+  });
 
   const isTouch = isPointerCoarse();
 
@@ -804,11 +835,13 @@ export function TranscriptMessageBody({
     );
   };
 
-  const renderToolResultImages = (toolCalls: ChatMessageToolCall[]) => (
+  const renderToolResultImages = (
+    toolCalls: ChatMessageToolCall[],
+    groupIndex: number,
+  ) => (
     <ToolResultImages
       toolCalls={toolCalls}
-      messageAttachments={message.attachments}
-      embeddedImageNames={embeddedImageNames}
+      resolvedImages={selectedImagesByGroupIndex[groupIndex]}
       assistantId={assistantId}
     />
   );
@@ -865,6 +898,10 @@ export function TranscriptMessageBody({
       cardItems[0]?.kind === "toolCall" &&
       renderableToolCalls.length === 1 &&
       !WEB_TOOL_NAMES.has(renderableToolCalls[0]!.name) &&
+      !isComputerUseToolCall(
+        renderableToolCalls[0]!.name,
+        renderableToolCalls[0]!.input,
+      ) &&
       !renderableToolCalls[0]!.pendingConfirmation
         ? renderableToolCalls[0]!
         : null;
@@ -872,7 +909,7 @@ export function TranscriptMessageBody({
       return (
         <Fragment key={key}>
           <SingleActivity variant="tool" toolCall={loneTool} />
-          {renderToolResultImages(groupToolCalls)}
+          {renderToolResultImages(groupToolCalls, groupIndex)}
           {renderInlineSubagentCards(groupToolCalls)}
           {renderInlineWorkflowCards(groupToolCalls)}
           {renderInlineAcpRunCards(groupToolCalls)}
@@ -906,7 +943,9 @@ export function TranscriptMessageBody({
           <div className="w-full">
             <MultiActivityGroup
               toolCalls={groupCardToolCalls}
+              groupToolCallIds={groupToolCalls.map((toolCall) => toolCall.id)}
               items={groupCardItems}
+              active={isStreaming && isLatestMessage && isLastGroup}
               messageId={message.id}
               groupIndex={groupIndex}
               onOpenRuleEditor={onOpenRuleEditor}
@@ -916,7 +955,7 @@ export function TranscriptMessageBody({
               onDismissUnknownNudge={onDismissUnknownNudge}
             />
           </div>
-          {renderToolResultImages(groupToolCalls)}
+          {renderToolResultImages(groupToolCalls, groupIndex)}
           {renderInlineSubagentCards(groupToolCalls)}
           {renderInlineWorkflowCards(groupToolCalls)}
           {renderInlineAcpRunCards(groupToolCalls)}
@@ -943,7 +982,7 @@ export function TranscriptMessageBody({
             groupIndex={groupIndex}
           />
         )}
-        {renderToolResultImages(groupToolCalls)}
+        {renderToolResultImages(groupToolCalls, groupIndex)}
         {renderInlineSubagentCards(groupToolCalls)}
         {renderInlineWorkflowCards(groupToolCalls)}
         {renderInlineAcpRunCards(groupToolCalls)}
@@ -992,7 +1031,7 @@ export function TranscriptMessageBody({
       }
     };
 
-    if (hasAttachments && message.attachments) {
+    if (hasCanonicalAttachments && message.attachments) {
       appendToLastBubble(
         <BubbleAttachments
           key="user-attachments"
@@ -1268,11 +1307,7 @@ export function TranscriptMessageBody({
       // Pinned only when the strip actually draws something. A group whose
       // images the end-of-turn attachments already show draws nothing, so it
       // has no reason to sit outside "Earlier activity".
-      resolveToolResultImages(
-        toolCalls,
-        message.attachments,
-        embeddedImageNames,
-      ).length > 0 ||
+      selectedImagesByGroupIndex[groupIndex]!.length > 0 ||
       activityHasDedicatedCard(group.items, isCardBacked) ||
       toolCalls.some(
         (toolCall) =>
@@ -1388,9 +1423,10 @@ export function TranscriptMessageBody({
         {pendingVisualToolUseIds.map((toolUseId) => (
           <VisualPlaceholder key={`visual-pending-${toolUseId}`} />
         ))}
-        {hasAttachments && (
+        {hasCanonicalAttachments && (
           <MessageAttachments
-            attachments={message.attachments ?? []}
+            attachments={visibleAssistantAttachments}
+            panelAttachments={message.attachments ?? []}
             assistantId={assistantId}
             messageId={message.id}
           />

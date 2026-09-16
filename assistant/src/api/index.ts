@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+export { isComputerUseToolCall } from "./computer-use-tool.js";
+
 import { AcpAuthRequiredEventSchema } from "./events/acp-auth-required.js";
 import { AcpSessionCompletedEventSchema } from "./events/acp-session-completed.js";
 import { AcpSessionErrorEventSchema } from "./events/acp-session-error.js";

@@ -65,6 +65,10 @@
     "backAria": "Back to all steps",
     "backTooltip": "All steps",
     "closeSteps": "Close steps",
+    "screenshotAria": "Preview screenshot from {activity}",
+    "screenshotFallbackAria": "Preview computer screenshot",
+    "screenshotFallbackTitle": "Computer screenshot",
+    "screenshotTitle": "Screenshot from {activity}",
     "thinkingTitle": "Thinking",
     "viewThinkingAria": "View thinking"
   },

@@ -231,6 +231,7 @@ mock.module("../daemon/conversation-attachments.js", () => ({
     emittedAttachments: [],
     directiveWarnings: [],
     persistedFiles: [],
+    computerUseScreenshotAttachmentIds: [],
   }),
   approveHostAttachmentRead: async () => true,
   formatAttachmentWarnings: () => "",

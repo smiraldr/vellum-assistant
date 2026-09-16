@@ -95,6 +95,8 @@ import {
 import { deleteConversationRowsInBatches } from "./conversation-row-batch-delete.js";
 import {
   BACKGROUND_CONVERSATION_TYPES,
+  COMPUTER_USE_SCREENSHOT_ATTACHMENT_IDS_KEY,
+  computerUseScreenshotAttachmentIdsFromMetadata,
   type ConversationCreateType,
   type ConversationOrigin,
   isHiddenMessageMetadata,
@@ -416,6 +418,9 @@ export const messageMetadataSchema = z
      * channel/interface fields cannot stand in for it.
      */
     voiceSessionTurn: z.boolean().optional(),
+    [COMPUTER_USE_SCREENSHOT_ATTACHMENT_IDS_KEY]: z
+      .array(z.string())
+      .optional(),
     /**
      * Discriminates daemon-authored rows from ordinary turns.
      * `"system_card"` marks pre-composed status cards (the /compact, /clean,
@@ -1852,7 +1857,20 @@ function populateForkContentsInProcess(args: PopulateForkContentsArgs): void {
     });
   }
 
-  widenForkSightFrameTags(messagesToCopy, forkedMessageIds, attachmentIdMap);
+  widenForkAttachmentIdTags(
+    messagesToCopy,
+    forkedMessageIds,
+    attachmentIdMap,
+    SIGHT_FRAME_ATTACHMENT_IDS_KEY,
+    sightFrameAttachmentIdsFromMetadata,
+  );
+  widenForkAttachmentIdTags(
+    messagesToCopy,
+    forkedMessageIds,
+    attachmentIdMap,
+    COMPUTER_USE_SCREENSHOT_ATTACHMENT_IDS_KEY,
+    computerUseScreenshotAttachmentIdsFromMetadata,
+  );
 
   // Set lastMessageAt to the max createdAt of copied messages so the
   // forked conversation sorts correctly by message recency.
@@ -1898,17 +1916,15 @@ function populateForkContentsInProcess(args: PopulateForkContentsArgs): void {
 }
 
 /**
- * Extend the copied rows' camera-frame tags to name the fork's cloned
- * attachment ids alongside the source ids they were written with.
+ * Extend a copied row's attachment-id metadata to name cloned ids alongside
+ * the source ids it was written with.
  *
  * A fork leaves its rows describing their attachments two different ways:
  * `messages.content` is copied byte for byte and still names the SOURCE
  * attachment ids, while `message_attachments` is re-linked to freshly CLONED
- * rows under new ids. Readers split along that seam. Camera-frame retention
- * matches the tag against the ids in the content blocks (source ids), and the
- * compactor builds its image manifest from the links (cloned ids) and stamps
- * those onto the frames it rebuilds. A tag naming only one vocabulary goes
- * blind on the other, so it names both.
+ * rows under new ids. Readers split along that seam. Content readers match
+ * source ids while attachment hydration reads cloned links. A tag naming only
+ * one vocabulary goes blind on the other, so it names both.
  *
  * Widening rather than remapping is deliberate: replacing the source ids would
  * fix the compactor's frames by breaking every frame the fork holds directly,
@@ -1919,10 +1935,12 @@ function populateForkContentsInProcess(args: PopulateForkContentsArgs): void {
  * Only rows that actually carry a tag are rewritten, so an ordinary fork does
  * no extra writes.
  */
-function widenForkSightFrameTags(
+function widenForkAttachmentIdTags(
   messagesToCopy: MessageRow[],
   forkedMessageIds: Map<string, string>,
   attachmentIdMap: Map<string, string>,
+  metadataKey: string,
+  readIds: (metadata: Record<string, unknown> | null | undefined) => string[],
 ): void {
   if (attachmentIdMap.size === 0) {
     return;
@@ -1934,7 +1952,7 @@ function widenForkSightFrameTags(
       continue;
     }
     const sourceMetadata = parseMessageMetadata(message.metadata);
-    const sourceIds = sightFrameAttachmentIdsFromMetadata(sourceMetadata);
+    const sourceIds = readIds(sourceMetadata);
     if (sourceIds.length === 0) {
       continue;
     }
@@ -1958,7 +1976,7 @@ function widenForkSightFrameTags(
       .set({
         metadata: JSON.stringify({
           ...(forkedMetadata ?? {}),
-          [SIGHT_FRAME_ATTACHMENT_IDS_KEY]: [...widened],
+          [metadataKey]: [...widened],
         }),
       })
       .where(eq(messages.id, forkedMessageId))
@@ -2809,8 +2827,8 @@ export interface ConversationAttachmentListing {
  * Driven from `messages` so the lineage predicate rides
  * `idx_messages_conversation_created_at`. An attachment linked to more than
  * one row is listed once, on the newest row that carries it. Tool-result rows
- * are left out: the transcript never shows them, and the assistant row carries
- * the promoted copy of every image a tool produced.
+ * are left out: reply-linked output belongs in Files, while tool-result-only
+ * media stays available through tool history.
  *
  * The lineage-wide select still reads every linked row: an exact `total` and
  * the metadata-derived flags are only known after the role and visibility
