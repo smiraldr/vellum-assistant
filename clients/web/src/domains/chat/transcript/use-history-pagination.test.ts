@@ -7,6 +7,7 @@ import {
   aggregateModeSessionDescriptors,
   aggregateSubagentNotifications,
   useAcceptedModeSessionDescriptors,
+  modeSessionIdsForRefresh,
 } from "@/domains/chat/transcript/use-history-pagination";
 import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
 import type { RuntimeSubagentNotification } from "@/domains/chat/api/messages";
@@ -167,6 +168,25 @@ describe("mode session descriptor aggregation", () => {
     expect(result.current).toEqual([]);
   });
 
+  test("skips descriptor aggregation while the feature is disabled", () => {
+    const pages = [page(undefined, undefined, [descriptor("session-a", 1)])];
+    const { result, rerender } = renderHook(
+      ({ enabled }) =>
+        useAcceptedModeSessionDescriptors("conv-1", pages, enabled),
+      { initialProps: { enabled: false } },
+    );
+    const disabled = result.current;
+
+    rerender({ enabled: false });
+    expect(result.current).toBe(disabled);
+    expect(result.current).toEqual([]);
+
+    rerender({ enabled: true });
+    expect(result.current.map(({ summary }) => summary.id)).toEqual([
+      "session-a",
+    ]);
+  });
+
   test("keeps the newest revision while preserving independent page content", () => {
     const result = aggregateModeSessionDescriptors([
       page(undefined, undefined, [descriptor("session-a", 2)]),
@@ -244,5 +264,14 @@ describe("mode session descriptor aggregation", () => {
         ]),
       ]),
     ).toEqual(["session-new", "session-old"]);
+  });
+
+  test("omits active session refresh ids while the feature is disabled", () => {
+    const pages = [
+      page(undefined, undefined, [descriptor("session-active", 1)]),
+    ];
+
+    expect(modeSessionIdsForRefresh(pages, false)).toEqual([]);
+    expect(modeSessionIdsForRefresh(pages, true)).toEqual(["session-active"]);
   });
 });

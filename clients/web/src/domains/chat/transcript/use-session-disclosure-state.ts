@@ -29,27 +29,29 @@ function emptyVisitState(
  */
 export function useSessionDisclosureState(
   conversationId: string | null,
+  enabled = true,
 ): SessionDisclosureState {
+  const activeConversationId = enabled ? conversationId : null;
   const [visit, setVisit] = useState<SessionDisclosureVisitState>(() =>
-    emptyVisitState(conversationId),
+    emptyVisitState(activeConversationId),
   );
 
   useEffect(() => {
     setVisit((current) =>
-      current.conversationId === conversationId
+      current.conversationId === activeConversationId
         ? current
-        : emptyVisitState(conversationId),
+        : emptyVisitState(activeConversationId),
     );
-  }, [conversationId]);
+  }, [activeConversationId]);
 
   const observeLiveSession = useCallback(
     (sessionId: string) => {
-      if (!conversationId || sessionId.length === 0) {
+      if (!activeConversationId || sessionId.length === 0) {
         return;
       }
       setVisit((current) => {
         if (
-          current.conversationId !== conversationId ||
+          current.conversationId !== activeConversationId ||
           current.observedLiveSessionIds.has(sessionId)
         ) {
           return current;
@@ -63,16 +65,16 @@ export function useSessionDisclosureState(
         };
       });
     },
-    [conversationId],
+    [activeConversationId],
   );
 
   const setSessionOpen = useCallback(
     (sessionId: string, open: boolean) => {
-      if (!conversationId || sessionId.length === 0) {
+      if (!activeConversationId || sessionId.length === 0) {
         return;
       }
       setVisit((current) => {
-        if (current.conversationId !== conversationId) {
+        if (current.conversationId !== activeConversationId) {
           return current;
         }
         if (current.explicitChoices.get(sessionId) === open) {
@@ -83,25 +85,28 @@ export function useSessionDisclosureState(
         return { ...current, explicitChoices };
       });
     },
-    [conversationId],
+    [activeConversationId],
   );
 
   const isSessionOpen = useCallback(
     (sessionId: string): boolean => {
-      if (visit.conversationId !== conversationId || sessionId.length === 0) {
+      if (
+        visit.conversationId !== activeConversationId ||
+        sessionId.length === 0
+      ) {
         return false;
       }
       const explicitChoice = visit.explicitChoices.get(sessionId);
       return explicitChoice ?? visit.observedLiveSessionIds.has(sessionId);
     },
-    [conversationId, visit],
+    [activeConversationId, visit],
   );
 
   const isSessionExplicitlyClosed = useCallback(
     (sessionId: string): boolean =>
-      visit.conversationId === conversationId &&
+      visit.conversationId === activeConversationId &&
       visit.explicitChoices.get(sessionId) === false,
-    [conversationId, visit],
+    [activeConversationId, visit],
   );
 
   return {

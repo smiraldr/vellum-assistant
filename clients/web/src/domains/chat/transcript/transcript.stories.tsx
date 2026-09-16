@@ -9,6 +9,7 @@ import type {
   ModeSessionDescriptor,
   ModeSession,
 } from "@vellumai/assistant-api";
+import { useAssistantFeatureFlagStore } from "@/stores/assistant-feature-flag-store";
 
 import {
   Transcript,
@@ -375,8 +376,19 @@ const SESSION_DESCRIPTORS: ModeSessionDescriptor[] = [
   },
 ];
 
-function SessionGroupingStory({ enabled = true }: { enabled?: boolean }) {
-  const disclosure = useSessionDisclosureState("session-story");
+function setSessionGroupsStoryFlag(enabled: boolean) {
+  useAssistantFeatureFlagStore.setState({ sessionGroups: enabled });
+  return () => {
+    useAssistantFeatureFlagStore.setState({ sessionGroups: false });
+  };
+}
+
+function SessionGroupingStory() {
+  const sessionGroupsEnabled = useAssistantFeatureFlagStore.use.sessionGroups();
+  const disclosure = useSessionDisclosureState(
+    "session-story",
+    sessionGroupsEnabled,
+  );
   const { observeLiveSession } = disclosure;
   useEffect(() => {
     observeLiveSession(ACTIVE_SESSION_ID);
@@ -388,7 +400,6 @@ function SessionGroupingStory({ enabled = true }: { enabled?: boolean }) {
       conversationId="session-story"
       modeSessionDescriptors={SESSION_DESCRIPTORS}
       sessionDisclosureState={disclosure}
-      sessionGroupsEnabled={enabled}
       sessionClockConnected
       sessionClockNow={SESSION_NOW}
       onSurfaceAction={() => {}}
@@ -399,18 +410,21 @@ function SessionGroupingStory({ enabled = true }: { enabled?: boolean }) {
 
 /** Recorded history is closed while the session observed live in this visit is open. */
 export const SessionHistoryAndLatestTurn: Story = {
+  beforeEach: () => setSessionGroupsStoryFlag(true),
   parameters: { controls: { disable: true } },
   render: () => <SessionGroupingStory />,
 };
 
 /** The same canonical rows remain flat when the presentation flag is disabled. */
 export const SessionGroupingFlagOff: Story = {
+  beforeEach: () => setSessionGroupsStoryFlag(false),
   parameters: { controls: { disable: true } },
-  render: () => <SessionGroupingStory enabled={false} />,
+  render: () => <SessionGroupingStory />,
 };
 
 /** The composed session transcript fits the real mobile viewport width. */
 export const SessionHistoryAndLatestTurnMobile: Story = {
+  beforeEach: () => setSessionGroupsStoryFlag(true),
   globals: { viewport: { value: "sbMobile", isRotated: false } },
   parameters: {
     controls: { disable: true },
@@ -464,7 +478,11 @@ const LIVE_DESCRIPTOR: ModeSessionDescriptor = {
 };
 
 function LiveSessionStory() {
-  const disclosure = useSessionDisclosureState("live-session-story");
+  const sessionGroupsEnabled = useAssistantFeatureFlagStore.use.sessionGroups();
+  const disclosure = useSessionDisclosureState(
+    "live-session-story",
+    sessionGroupsEnabled,
+  );
   const { observeLiveSession } = disclosure;
   useEffect(() => {
     observeLiveSession(LIVE_SESSION_ID);
@@ -476,7 +494,6 @@ function LiveSessionStory() {
       conversationId="live-session-story"
       modeSessionDescriptors={[LIVE_DESCRIPTOR]}
       sessionDisclosureState={disclosure}
-      sessionGroupsEnabled
       sessionClockConnected
       sessionClockNow={SESSION_NOW}
       onSurfaceAction={() => {}}
@@ -487,6 +504,7 @@ function LiveSessionStory() {
 
 /** Live vision includes its stamped camera/user prefix in the active group. */
 export const LiveSessionLatestTurn: Story = {
+  beforeEach: () => setSessionGroupsStoryFlag(true),
   parameters: { controls: { disable: true } },
   render: () => <LiveSessionStory />,
 };

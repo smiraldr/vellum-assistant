@@ -76,6 +76,7 @@ import type { TranscriptItem } from "@/domains/chat/transcript/types";
 import { Transcript } from "@/domains/chat/transcript/transcript";
 import { resetResponseArtifactAwards } from "@/domains/chat/transcript/resolve-response-artifacts";
 import { INITIAL_TURN_STATE, useTurnStore } from "@/domains/chat/turn-store";
+import { useAssistantFeatureFlagStore } from "@/stores/assistant-feature-flag-store";
 import { viewportAxesStub } from "@/hooks/viewport-axes.test-helper";
 import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
 import type { SessionDisclosureState } from "@/domains/chat/transcript/use-session-disclosure-state";
@@ -143,6 +144,7 @@ function completedDescriptor(id: string): ModeSessionDescriptor {
 afterEach(() => {
   cleanup();
   markdownRenderCount = 0;
+  useAssistantFeatureFlagStore.setState({ sessionGroups: false });
 });
 
 describe("Transcript", () => {
@@ -456,24 +458,47 @@ describe("Transcript", () => {
     }
   });
 
-  test("keeps the ordinary flat transcript when the presentation flag is off", () => {
+  test("uses the assistant flag and avoids session observers while it is off", () => {
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    let observerCount = 0;
+    globalThis.IntersectionObserver = class implements IntersectionObserver {
+      readonly root = null;
+      readonly rootMargin = "0px";
+      readonly thresholds = [0];
+      constructor() {
+        observerCount += 1;
+      }
+      disconnect() {}
+      observe() {}
+      takeRecords() {
+        return [];
+      }
+      unobserve() {}
+    };
+    const interval = spyOn(globalThis, "setInterval");
     const stamped = assistantMessage("a-session", "Flat reply");
     if (stamped.kind !== "message") {
       throw new Error("Expected message fixture");
     }
     stamped.message.modeSession = { mode: "browser", id: "session-1" };
-    const { getByText, queryByRole } = render(
-      <Transcript
-        items={[stamped]}
-        conversationId="conv-1"
-        modeSessionDescriptors={[completedDescriptor("session-1")]}
-        sessionGroupsEnabled={false}
-        onSurfaceAction={noop}
-      />,
-    );
+    try {
+      const { getByText, queryByRole } = render(
+        <Transcript
+          items={[stamped]}
+          conversationId="conv-1"
+          modeSessionDescriptors={[activeDescriptor("session-1", "a-session")]}
+          onSurfaceAction={noop}
+        />,
+      );
 
-    expect(getByText("Flat reply")).toBeTruthy();
-    expect(queryByRole("button", { name: /Browser session/ })).toBeNull();
+      expect(getByText("Flat reply")).toBeTruthy();
+      expect(queryByRole("button", { name: /Browser session/ })).toBeNull();
+      expect(observerCount).toBe(0);
+      expect(interval).not.toHaveBeenCalled();
+    } finally {
+      globalThis.IntersectionObserver = originalIntersectionObserver;
+      interval.mockRestore();
+    }
   });
 
   test("with empty items, renders zero rows", () => {

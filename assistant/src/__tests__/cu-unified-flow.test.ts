@@ -7,6 +7,9 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
+import { isSessionGroupsEnabled } from "../config/session-groups-gate.js";
+import { ComputerUseModeSessionProducer } from "../daemon/computer-use-mode-session.js";
+import { setOverridesForTesting } from "./feature-flag-test-helpers.js";
 import { asConversation } from "./helpers/mock-conversation.js";
 
 const sentMessages: unknown[] = [];
@@ -144,6 +147,7 @@ describe("surfaceProxyResolver — CU tool routing", () => {
   }
 
   afterEach(() => {
+    setOverridesForTesting({});
     proxy?.dispose();
   });
 
@@ -342,6 +346,41 @@ describe("surfaceProxyResolver — CU tool routing", () => {
   // -------------------------------------------------------------------------
 
   describe("action tools proxy to client", () => {
+    test("dispatches without mode-session side effects while session groups are disabled", async () => {
+      setOverridesForTesting({ "session-groups": false });
+      const ctx = setupProxy();
+      ctx.currentRequestId = "turn-123";
+      const activateSource = mock(() => {
+        throw new Error("disabled tracking must not activate a source");
+      });
+      (
+        ctx as unknown as {
+          computerUseModeSessions: Conversation["computerUseModeSessions"];
+        }
+      ).computerUseModeSessions = new ComputerUseModeSessionProducer(
+        {
+          activateSource,
+          beginDraining: mock(() => false),
+          claimTurn: mock(() => undefined),
+          getTurnOwner: mock(() => undefined),
+          recordActivity: mock(() => false),
+          retireSource: mock(() => false),
+        },
+        isSessionGroupsEnabled,
+      );
+
+      const resultPromise = surfaceProxyResolver(ctx, "computer_use_click", {
+        element_id: 42,
+      });
+      const sent = sentMessages[0] as { requestId: string; type: string };
+      expect(sent.type).toBe("host_cu_request");
+      expect(activateSource).not.toHaveBeenCalled();
+
+      proxy.processObservation(sent.requestId, { executionResult: "clicked" });
+      const result = await resultPromise;
+      expect(result.isError).toBe(false);
+    });
+
     test("computer_use_click routes through proxy and returns observation", async () => {
       const ctx = setupProxy();
 

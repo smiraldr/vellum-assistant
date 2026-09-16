@@ -1,6 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 
+import { setOverridesForTesting } from "../__tests__/feature-flag-test-helpers.js";
 import type { ModeSession } from "../api/mode-session.js";
+import { isSessionGroupsEnabled } from "../config/session-groups-gate.js";
 import { BrowserModeSessionProducer } from "./browser-mode-session.js";
 import type {
   ModeSessionSourceHandle,
@@ -72,6 +74,56 @@ function createCoordinator() {
 }
 
 describe("BrowserModeSessionProducer", () => {
+  afterEach(() => {
+    setOverridesForTesting({});
+  });
+
+  test("admits new tracking only while the shared feature flag is enabled", () => {
+    const state = createCoordinator();
+    const producer = new BrowserModeSessionProducer(
+      state.coordinator,
+      1,
+      isSessionGroupsEnabled,
+    );
+
+    setOverridesForTesting({});
+    expect(isSessionGroupsEnabled()).toBe(false);
+    expect(
+      producer.beginOperation({
+        turnId: "turn-disabled",
+        lifecycle: "action",
+        at: 100,
+      }),
+    ).toBeUndefined();
+    expect(state.activated).toEqual([]);
+
+    setOverridesForTesting({ "session-groups": true });
+    const admitted = producer.beginOperation({
+      turnId: "turn-enabled",
+      lifecycle: "action",
+      at: 110,
+    });
+    expect(admitted?.owner).toEqual({ id: "browser-1", mode: "browser" });
+
+    setOverridesForTesting({ "session-groups": false });
+    state.clearOwner();
+    const close = producer.beginOperation({
+      turnId: "turn-close",
+      lifecycle: "terminal",
+      at: 120,
+    });
+    expect(close?.owner).toEqual({ id: "browser-1", mode: "browser" });
+    expect(
+      producer.finishOperation(close, {
+        at: 130,
+        isError: false,
+        cancelled: false,
+        terminalReason: "browser_closed",
+      }),
+    ).toBe(true);
+    expect(state.retired).toHaveLength(1);
+  });
+
   test("claims the first action and records repeated successful activity", () => {
     const state = createCoordinator();
     const producer = new BrowserModeSessionProducer(state.coordinator);

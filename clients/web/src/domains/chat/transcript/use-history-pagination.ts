@@ -35,6 +35,9 @@ import type { DisplayMessage } from "@/domains/chat/types/types";
 import type { BackgroundTaskEntry } from "@/domains/chat/background-task-store";
 import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
 
+const EMPTY_MODE_SESSION_DESCRIPTORS: ModeSessionDescriptor[] = [];
+const EMPTY_MODE_SESSION_IDS: string[] = [];
+
 // ---------------------------------------------------------------------------
 // Query key
 // ---------------------------------------------------------------------------
@@ -147,23 +150,37 @@ export function activeModeSessionIdsForRefresh(
     .map((descriptor) => descriptor.summary.id);
 }
 
+export function modeSessionIdsForRefresh(
+  pages: readonly PaginatedHistoryResult[] | undefined,
+  enabled: boolean,
+): string[] {
+  return enabled
+    ? activeModeSessionIdsForRefresh(pages)
+    : EMPTY_MODE_SESSION_IDS;
+}
+
 export function useAcceptedModeSessionDescriptors(
   conversationId: string | null,
   pages: readonly PaginatedHistoryResult[] | undefined,
+  enabled = true,
 ): ModeSessionDescriptor[] {
   const [accepted, setAccepted] = useState<{
     conversationId: string | null;
     descriptors: ModeSessionDescriptor[];
   }>({ conversationId, descriptors: [] });
-  const descriptors = useMemo(
-    () =>
-      aggregateModeSessionDescriptors(
-        pages,
-        accepted.conversationId === conversationId ? accepted.descriptors : [],
-      ),
-    [accepted, conversationId, pages],
-  );
+  const descriptors = useMemo(() => {
+    if (!enabled) {
+      return EMPTY_MODE_SESSION_DESCRIPTORS;
+    }
+    return aggregateModeSessionDescriptors(
+      pages,
+      accepted.conversationId === conversationId ? accepted.descriptors : [],
+    );
+  }, [accepted, conversationId, enabled, pages]);
   useEffect(() => {
+    if (!enabled) {
+      return;
+    }
     setAccepted((current) => {
       if (
         current.conversationId === conversationId &&
@@ -173,7 +190,7 @@ export function useAcceptedModeSessionDescriptors(
       }
       return { conversationId, descriptors };
     });
-  }, [conversationId, descriptors]);
+  }, [conversationId, descriptors, enabled]);
   return descriptors;
 }
 
@@ -188,6 +205,7 @@ interface UseHistoryPaginationParams {
   assistantId: string | null;
   conversationId: string | null;
   enabled: boolean;
+  sessionGroupsEnabled: boolean;
 }
 
 export interface HistoryPaginationResult {
@@ -240,6 +258,7 @@ export function useHistoryPagination({
   assistantId,
   conversationId,
   enabled,
+  sessionGroupsEnabled,
 }: UseHistoryPaginationParams): HistoryPaginationResult {
   const queryClient = useQueryClient();
   const queryKey = useMemo(
@@ -262,7 +281,7 @@ export function useHistoryPagination({
         assistantId,
         conversationId,
         undefined,
-        activeModeSessionIdsForRefresh(cached?.pages),
+        modeSessionIdsForRefresh(cached?.pages, sessionGroupsEnabled),
       );
     },
     initialPageParam: null as number | null,
@@ -331,6 +350,7 @@ export function useHistoryPagination({
   const modeSessions = useAcceptedModeSessionDescriptors(
     conversationId,
     query.data?.pages,
+    sessionGroupsEnabled,
   );
 
   const latestPage = query.data?.pages[0];
@@ -356,7 +376,7 @@ export function useHistoryPagination({
     latestPage,
     subagentNotifications,
     backgroundToolCompletions,
-    modeSessions,
+    modeSessions: sessionGroupsEnabled ? modeSessions : undefined,
     isLoading: query.isLoading,
     isSuccess: query.isSuccess,
     isError: query.isError,

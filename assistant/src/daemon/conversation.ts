@@ -39,6 +39,7 @@ import { resolveCallSiteConfig } from "../config/llm-resolver.js";
 import { getConfig } from "../config/loader.js";
 import type { LLMCallSite, Speed } from "../config/schemas/llm.js";
 import { resolveSendUserMessageActive } from "../config/send-user-message-gate.js";
+import { isSessionGroupsEnabled } from "../config/session-groups-gate.js";
 import {
   derefToolResultReReads,
   postTurnTruncateToolResults,
@@ -967,9 +968,12 @@ export class Conversation {
     this.modeSessions = new ConversationModeSessionCoordinator(conversationId);
     this.computerUseModeSessions = new ComputerUseModeSessionProducer(
       this.modeSessions,
+      isSessionGroupsEnabled,
     );
     this.browserModeSessions = new BrowserModeSessionProducer(
       this.modeSessions,
+      1,
+      isSessionGroupsEnabled,
     );
     this.parentConversationId = options?.parentConversationId;
     this.systemPrompt = systemPrompt;

@@ -36,7 +36,7 @@ import type { ConfirmationDecision } from "@/types/event-types";
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
 import type { DisplayMessage } from "@/domains/chat/types/types";
 import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
-import { useClientFeatureFlagStore } from "@/stores/client-feature-flag-store";
+import { useAssistantFeatureFlagStore } from "@/stores/assistant-feature-flag-store";
 import {
   groupSessionItems,
   type SessionGroupedTranscriptItem,
@@ -75,7 +75,7 @@ export interface TranscriptProps {
   conversationId: string | null;
   modeSessionDescriptors?: ModeSessionDescriptor[];
   sessionDisclosureState?: SessionDisclosureState;
-  /** Deterministic story/test override. Production reads the client flag. */
+  /** Deterministic story/test override. Production reads the assistant flag. */
   sessionGroupsEnabled?: boolean;
   sessionClockConnected?: boolean;
   /** Deterministic story/test override for live summary time. */
@@ -251,6 +251,7 @@ function useSessionHeaderVisibility(
   rootRef: RefObject<HTMLDivElement | null>,
   eligibleSessionIds: readonly string[],
   resetKey: string | null,
+  enabled: boolean,
 ) {
   const nodesRef = useRef(new Map<string, HTMLButtonElement>());
   const observerRef = useRef<IntersectionObserver | null>(null);
@@ -269,13 +270,23 @@ function useSessionHeaderVisibility(
         nodesRef.current.delete(sessionId);
         return;
       }
+      if (!enabled) {
+        nodesRef.current.delete(sessionId);
+        return;
+      }
       nodesRef.current.set(sessionId, node);
       observerRef.current?.observe(node);
     },
-    [],
+    [enabled],
   );
 
   useLayoutEffect(() => {
+    if (!enabled) {
+      setVisibleSessionIds((current) =>
+        current.size === 0 ? current : new Set(),
+      );
+      return;
+    }
     const eligible = new Set(eligibleSessionIds);
     const useVisibleFallback =
       typeof IntersectionObserver === "undefined" || !rootRef.current;
@@ -324,7 +335,7 @@ function useSessionHeaderVisibility(
         observerRef.current = null;
       }
     };
-  }, [eligibleKey, eligibleSessionIds, resetKey, rootRef]);
+  }, [eligibleKey, eligibleSessionIds, enabled, resetKey, rootRef]);
 
   const isHeaderVisible = useCallback(
     (sessionId: string) => visibleSessionIds.has(sessionId),
@@ -477,9 +488,12 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
       ...rest
     } = props;
     const configuredSessionGroups =
-      useClientFeatureFlagStore.use.sessionGroups();
+      useAssistantFeatureFlagStore.use.sessionGroups();
     const sessionGroupsOn = sessionGroupsEnabled ?? configuredSessionGroups;
-    const fallbackDisclosure = useSessionDisclosureState(conversationId);
+    const fallbackDisclosure = useSessionDisclosureState(
+      conversationId,
+      sessionGroupsOn,
+    );
     const disclosure = sessionDisclosureState ?? fallbackDisclosure;
     const scrollRef = useRef<HTMLDivElement | null>(null);
     const contentRef = useRef<HTMLDivElement | null>(null);
@@ -532,26 +546,28 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
     });
 
     const partition = useMemo(() => partitionLatestTurn(items), [items]);
-    const descriptorsById = useMemo(
-      () =>
-        new Map(
-          modeSessionDescriptors.map((descriptor) => [
-            descriptor.summary.id,
-            descriptor,
-          ]),
-        ),
-      [modeSessionDescriptors],
-    );
-    const summariesById = useMemo(
-      () =>
-        new Map(
-          modeSessionDescriptors.map((descriptor) => [
-            descriptor.summary.id,
-            descriptor.summary,
-          ]),
-        ),
-      [modeSessionDescriptors],
-    );
+    const descriptorsById = useMemo(() => {
+      if (!sessionGroupsOn) {
+        return new Map<string, ModeSessionDescriptor>();
+      }
+      return new Map(
+        modeSessionDescriptors.map((descriptor) => [
+          descriptor.summary.id,
+          descriptor,
+        ]),
+      );
+    }, [modeSessionDescriptors, sessionGroupsOn]);
+    const summariesById = useMemo(() => {
+      if (!sessionGroupsOn) {
+        return new Map();
+      }
+      return new Map(
+        modeSessionDescriptors.map((descriptor) => [
+          descriptor.summary.id,
+          descriptor.summary,
+        ]),
+      );
+    }, [modeSessionDescriptors, sessionGroupsOn]);
     const [segmentHistory, setSegmentHistory] = useState<SegmentHistory>({
       conversationId,
       segments: [],
@@ -612,9 +628,11 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
       summariesById,
     ]);
     useEffect(() => {
-      const segments = [...grouped.history, ...grouped.latest].filter(
-        (item): item is SessionGroupSegment => item.kind === "sessionGroup",
-      );
+      const segments = sessionGroupsOn
+        ? [...grouped.history, ...grouped.latest].filter(
+            (item): item is SessionGroupSegment => item.kind === "sessionGroup",
+          )
+        : [];
       setSegmentHistory((current) => {
         if (
           current.conversationId === conversationId &&
@@ -624,8 +642,11 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
         }
         return { conversationId, segments };
       });
-    }, [conversationId, grouped]);
+    }, [conversationId, grouped, sessionGroupsOn]);
     const clockEligibleSessionIds = useMemo(() => {
+      if (!sessionGroupsOn) {
+        return [];
+      }
       const ids = new Set<string>();
       for (const item of [...grouped.history, ...grouped.latest]) {
         if (item.kind !== "sessionGroup" || !item.containsLastBoundary) {
@@ -637,14 +658,18 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
         }
       }
       return [...ids];
-    }, [descriptorsById, grouped]);
+    }, [descriptorsById, grouped, sessionGroupsOn]);
     const sessionHeaderVisibility = useSessionHeaderVisibility(
       scrollRef,
       clockEligibleSessionIds,
       conversationId,
+      sessionGroupsOn,
     );
     const sessionByMemberId = useMemo(() => {
       const result = new Map<string, string>();
+      if (!sessionGroupsOn) {
+        return result;
+      }
       for (const item of [...grouped.history, ...grouped.latest]) {
         if (item.kind !== "sessionGroup") {
           continue;
@@ -654,7 +679,7 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
         }
       }
       return result;
-    }, [grouped]);
+    }, [grouped, sessionGroupsOn]);
     const domMessageIdByIdentity = useMemo(() => {
       const result = new Map<string, string>();
       for (const item of items) {

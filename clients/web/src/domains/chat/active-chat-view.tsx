@@ -96,6 +96,7 @@ import { usePendingDeepLinkStore } from "@/stores/pending-deep-link-store";
 import { ChatContentLayout } from "@/domains/chat/components/chat-content-layout";
 import type { ChatMainPanelProps } from "@/domains/chat/components/chat-route-content";
 import { useSessionDisclosureState } from "@/domains/chat/transcript/use-session-disclosure-state";
+import { useAssistantFeatureFlagStore } from "@/stores/assistant-feature-flag-store";
 
 /**
  * Stage a `?prompt=` that arrived without in-app provenance (a clicked link)
@@ -141,8 +142,11 @@ export function ActiveChatView() {
   // Zustand store selectors
   // -------------------------------------------------------------------------
   const activeConversationId = useConversationStore.use.activeConversationId();
-  const sessionDisclosureState =
-    useSessionDisclosureState(activeConversationId);
+  const sessionGroupsEnabled = useAssistantFeatureFlagStore.use.sessionGroups();
+  const sessionDisclosureState = useSessionDisclosureState(
+    activeConversationId,
+    sessionGroupsEnabled,
+  );
   const isTokenDialogOpen = useDeployStore.use.isTokenDialogOpen();
   const complexDeployApp = useDeployStore.use.complexDeployApp();
 

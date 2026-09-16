@@ -92,4 +92,21 @@ describe("useSessionDisclosureState", () => {
     expect(result.current.isSessionOpen("session-123")).toBe(false);
     expect(result.current.isSessionOpen("")).toBe(false);
   });
+
+  test("does not retain or record disclosure state while disabled", () => {
+    const { result, rerender } = renderHook(
+      ({ enabled }) => useSessionDisclosureState("conv-123", enabled),
+      { initialProps: { enabled: true } },
+    );
+    act(() => result.current.observeLiveSession("session-123"));
+    expect(result.current.isSessionOpen("session-123")).toBe(true);
+
+    rerender({ enabled: false });
+    expect(result.current.isSessionOpen("session-123")).toBe(false);
+    act(() => result.current.setSessionOpen("session-123", true));
+    expect(result.current.isSessionOpen("session-123")).toBe(false);
+
+    rerender({ enabled: true });
+    expect(result.current.isSessionOpen("session-123")).toBe(false);
+  });
 });

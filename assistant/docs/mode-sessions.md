@@ -61,6 +61,18 @@ the producer and message-membership integration. Those process-local facts are
 not reconstructed after restart. Resumed mode work uses a fresh session ID and
 callbacks from retired source generations are rejected.
 
+New producer admissions are controlled by the default-off `session-groups`
+assistant feature flag. Browser and computer-use actions still execute when the
+flag is off, but they do not activate or claim a mode session. Existing owners
+and terminal cleanup continue to drain so disabling the flag cannot strand
+accepted work. Live voice snapshots the flag when its socket session is
+created: disabled sessions retain the existing camera transport without
+advertising or preparing tracked sight-session epochs.
+
+The migration, startup recovery, persisted message stamps, and history reads
+remain available while the flag is off. This keeps records made by an enabled
+cohort compatible with rollback and later re-enablement.
+
 ## Runtime ownership
 
 Each live `Conversation` owns one `ConversationModeSessionCoordinator`.

@@ -16,7 +16,10 @@ import {
   test,
 } from "bun:test";
 
+import { setOverridesForTesting } from "../../__tests__/feature-flag-test-helpers.js";
+import { isSessionGroupsEnabled } from "../../config/session-groups-gate.js";
 import type { BrowserOperationToken } from "../../daemon/browser-mode-session.js";
+import { BrowserModeSessionProducer } from "../../daemon/browser-mode-session.js";
 import { desktopDependencyInstaller } from "../../desktop/desktop-dependencies.js";
 import * as desktopFeature from "../../desktop/virtual-desktop-feature.js";
 import { browserManager } from "../../tools/browser/browser-manager.js";
@@ -207,6 +210,7 @@ function callHandler(
 // ---------------------------------------------------------------------------
 
 afterEach(() => {
+  setOverridesForTesting({});
   desktopEnabled = false;
   desktopReady = false;
   desktopFailure = false;
@@ -558,6 +562,38 @@ describe("browser_execute route", () => {
         }),
       }),
     ]);
+  });
+
+  test("executes a live-turn action without tracking while session groups are disabled", async () => {
+    setOverridesForTesting({ "session-groups": false });
+    const activateSource = mock(() => {
+      throw new Error("disabled tracking must not activate a source");
+    });
+    mockConversation = {
+      currentRequestId: "turn-123",
+      browserModeSessions: new BrowserModeSessionProducer(
+        {
+          activateSource,
+          claimTurn: mock(() => undefined),
+          getTurnOwner: mock(() => undefined),
+          recordActivity: mock(() => false),
+          retireSource: mock(() => false),
+        },
+        1,
+        isSessionGroupsEnabled,
+      ),
+      getTurnActorPrincipalId: () => undefined,
+    };
+
+    const result = await callHandler({
+      operation: "navigate",
+      input: { url: "https://example.com" },
+      conversationId: "conv-live",
+    });
+
+    expect(result).toEqual({ content: "ok", isError: false });
+    expect(mockOperationCalls).toHaveLength(1);
+    expect(activateSource).not.toHaveBeenCalled();
   });
 
   test("passes typed terminal success and failure outcomes", async () => {

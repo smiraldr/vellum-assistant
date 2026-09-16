@@ -22,10 +22,15 @@ export interface ComputerUseSourceIdentity {
 /** Maps validated host computer actions onto the shared session coordinator. */
 export class ComputerUseModeSessionProducer {
   readonly #coordinator: ModeSessionCoordinator;
+  readonly #isTrackingEnabled: () => boolean;
   #activeHandle?: ModeSessionSourceHandle;
 
-  constructor(coordinator: ModeSessionCoordinator) {
+  constructor(
+    coordinator: ModeSessionCoordinator,
+    isTrackingEnabled: () => boolean = () => true,
+  ) {
     this.#coordinator = coordinator;
+    this.#isTrackingEnabled = isTrackingEnabled;
   }
 
   recordAction(input: {
@@ -37,6 +42,10 @@ export class ComputerUseModeSessionProducer {
     if (existingOwner) {
       this.#coordinator.recordActivity(input.turnId, input.at);
       return existingOwner;
+    }
+
+    if (!this.#isTrackingEnabled()) {
+      return undefined;
     }
 
     const handle = this.#coordinator.activateSource({

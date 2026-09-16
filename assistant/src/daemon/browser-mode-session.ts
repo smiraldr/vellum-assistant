@@ -30,11 +30,17 @@ const BROWSER_SOURCE_ID = "browser";
 export class BrowserModeSessionProducer {
   readonly #coordinator: ModeSessionCoordinator;
   readonly #generation: number;
+  readonly #isTrackingEnabled: () => boolean;
   #activeHandle?: ModeSessionSourceHandle;
 
-  constructor(coordinator: ModeSessionCoordinator, generation = 1) {
+  constructor(
+    coordinator: ModeSessionCoordinator,
+    generation = 1,
+    isTrackingEnabled: () => boolean = () => true,
+  ) {
     this.#coordinator = coordinator;
     this.#generation = generation;
+    this.#isTrackingEnabled = isTrackingEnabled;
   }
 
   beginOperation(input: {
@@ -75,6 +81,10 @@ export class BrowserModeSessionProducer {
         owner,
         handle,
       };
+    }
+
+    if (!this.#isTrackingEnabled()) {
+      return undefined;
     }
 
     const handle = this.#coordinator.activateSource({

@@ -538,10 +538,10 @@
     },
     {
       "id": "session-groups",
-      "scope": "client",
+      "scope": "both",
       "key": "session-groups",
       "label": "Session Groups",
-      "description": "Presents recorded computer use, browser, live vision, and ambient runs as collapsible transcript groups. Rollout remains off until transcript composition and navigation acceptance are complete.",
+      "description": "Records eligible computer use, browser, live vision, and ambient runs and presents them as collapsible transcript groups. Off preserves ordinary actions and the flat transcript without new session tracking.",
       "defaultEnabled": false
     },
     {

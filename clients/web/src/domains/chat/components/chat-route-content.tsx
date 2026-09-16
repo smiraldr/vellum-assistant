@@ -178,6 +178,7 @@ import { useVoiceInput } from "@/domains/chat/hooks/use-voice-input";
 import { useConversationListQuery } from "@/hooks/conversation-queries";
 import { useAssistantAvatar } from "@/hooks/use-assistant-avatar";
 import { useAssistantIdentityStore } from "@/stores/assistant-identity-store";
+import { useAssistantFeatureFlagStore } from "@/stores/assistant-feature-flag-store";
 import { useClientFeatureFlagStore } from "@/stores/client-feature-flag-store";
 import { shouldMintNewChatDraft } from "@/domains/chat/utils/conversation-selection";
 import { isNativeMobile } from "@/runtime/platform-detection";
@@ -760,7 +761,7 @@ export function ChatMainPanel({
     showOnboardingChoice,
     creditsExhausted: balanceStatus.isExhausted,
   });
-  const sessionGroupsEnabled = useClientFeatureFlagStore.use.sessionGroups();
+  const sessionGroupsEnabled = useAssistantFeatureFlagStore.use.sessionGroups();
 
   // --- Ref writes (connect hook outputs to ActiveChatView's debug refs) ---
   useEffect(() => {

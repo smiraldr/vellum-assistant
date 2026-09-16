@@ -235,9 +235,10 @@ The optional `modeSession`, `modeSessionActivity`, and response-level
 `modeSessions` fields need no version gate. Assistants without them keep the
 ordinary flat transcript. The web groups only rows with valid canonical
 membership and a same-conversation descriptor. It never infers membership from
-message text, tool names, or timing. The `session-groups` client flag controls
-presentation only, so persisted rows and live event handling remain compatible
-while rollout is disabled.
+message text, tool names, or timing. The assistant-scoped `session-groups` flag
+controls both tracking and presentation. When it is disabled, optional cached
+metadata remains compatible while the web renders the ordinary flat transcript
+and skips session-specific refresh and presentation work.
 
 ## The gates
 
