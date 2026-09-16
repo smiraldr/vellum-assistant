@@ -4341,6 +4341,24 @@ export function purgeConversationSegments(
   return segmentIds;
 }
 
+/** Repair derived mode-session boundaries without changing delete success. */
+function repairModeSessionBoundariesAfterDelete(conversationId: string): void {
+  const maxAttempts = 2;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      repairConversationModeSessionBoundaries(conversationId);
+      return;
+    } catch (err) {
+      if (attempt === maxAttempts) {
+        log.warn(
+          { err, conversationId, attempts: maxAttempts },
+          "Failed to repair mode session boundaries after message deletion; continuing",
+        );
+      }
+    }
+  }
+}
+
 export function deleteLastExchange(conversationId: string): number {
   const db = getDb();
 
@@ -4446,7 +4464,7 @@ export function deleteLastExchange(conversationId: string): number {
   }
 
   if (deleted > 0) {
-    repairConversationModeSessionBoundaries(conversationId);
+    repairModeSessionBoundariesAfterDelete(conversationId);
   }
 
   return deleted;
@@ -4759,7 +4777,7 @@ export function deleteMessageById(
       messageId,
       createdAt: msgRow.createdAt,
     } satisfies MessageDeletedInputContext);
-    repairConversationModeSessionBoundaries(msgRow.conversationId);
+    repairModeSessionBoundariesAfterDelete(msgRow.conversationId);
   }
 
   return result;
