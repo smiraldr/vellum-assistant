@@ -9,8 +9,10 @@ import { describe, expect, test } from "bun:test";
 
 import {
   filterCardBackedProcessCalls,
+  isLastActivityGroup,
   type ProcessCardBacking,
 } from "@/domains/chat/hooks/use-live-activity-group";
+import type { ContentBlockGroup } from "@/domains/chat/transcript/message-content";
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
 import type { ToolCallCardItem } from "@/domains/chat/utils/tool-call-card-utils";
 
@@ -56,10 +58,12 @@ const BG_BASH: ChatMessageToolCall = {
 function itemsFor(toolCalls: ChatMessageToolCall[]): ToolCallCardItem[] {
   return [
     { kind: "thinking", text: "planning" },
-    ...toolCalls.map((tc): ToolCallCardItem => ({
-      kind: "toolCall",
-      toolCall: tc,
-    })),
+    ...toolCalls.map(
+      (tc): ToolCallCardItem => ({
+        kind: "toolCall",
+        toolCall: tc,
+      }),
+    ),
   ];
 }
 
@@ -130,5 +134,25 @@ describe("filterCardBackedProcessCalls", () => {
       backing,
     );
     expect(result.toolCalls.map((tc) => tc.id)).toEqual(["tc-bash"]);
+  });
+});
+
+describe("isLastActivityGroup", () => {
+  const activity = (): ContentBlockGroup => ({ type: "activity", items: [] });
+
+  test("marks only a trailing activity group active", () => {
+    expect(isLastActivityGroup([activity()], 0)).toBe(true);
+    expect(
+      isLastActivityGroup(
+        [activity(), { type: "text", text: "visible response" }],
+        0,
+      ),
+    ).toBe(false);
+  });
+
+  test("does not mark a trailing non-activity group active", () => {
+    expect(
+      isLastActivityGroup([{ type: "text", text: "visible response" }], 0),
+    ).toBe(false);
   });
 });

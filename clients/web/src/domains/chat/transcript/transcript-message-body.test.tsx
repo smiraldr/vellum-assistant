@@ -204,9 +204,11 @@ mock.module(
       autoExpand,
       toolCalls,
       items,
+      active,
     }: {
       autoExpand?: boolean;
       toolCalls: Array<{ id: string }>;
+      active?: boolean;
       items?: Array<
         | { kind: "thinking"; text: string }
         | { kind: "toolCall"; toolCall: { id: string } }
@@ -215,6 +217,7 @@ mock.module(
       <div
         data-testid="tool-progress-card"
         data-auto-expand={autoExpand ? "true" : "false"}
+        data-active={active ? "true" : "false"}
         data-tool-call-ids={toolCalls.map((tc) => tc.id).join(",")}
         // Surface the ordered items so the merged-card tests can assert the
         // interleaved thinking + tool steps the card would render in its body.
@@ -1798,6 +1801,159 @@ describe("TranscriptMessageBody", () => {
     expect(
       Array.from(markdowns).some((m) => m.textContent === "the middle answer"),
     ).toBe(true);
+  });
+
+  test("keeps a blank-separated ordinary run in one active header while streaming", () => {
+    const message: DisplayMessage = {
+      id: "m-blank-streaming",
+      role: "assistant",
+      contentBlocks: [
+        thinkingBlock("plan"),
+        textBlock("\n"),
+        toolUseBlock({
+          id: "tc-first",
+          name: "bash",
+          input: {},
+          completedAt: 1,
+        }),
+        textBlock("  "),
+        thinkingBlock("prepare next step"),
+        textBlock("\t"),
+        toolUseBlock({ id: "tc-next", name: "bash", input: {} }),
+        textBlock("\n"),
+      ],
+    };
+
+    const { container, queryByRole } = render(
+      <TranscriptMessageBody
+        message={message}
+        onSurfaceAction={noop}
+        isStreaming
+        isLatestMessage
+      />,
+    );
+
+    expect(queryByRole("button", { name: "Earlier activity" })).toBeNull();
+    const cards = container.querySelectorAll(
+      "[data-testid='tool-progress-card']",
+    );
+    expect(cards).toHaveLength(1);
+    expect(cards[0]!.getAttribute("data-item-kinds")).toBe(
+      "thinking,toolCall,thinking,toolCall",
+    );
+    expect(cards[0]!.getAttribute("data-item-tool-ids")).toBe(
+      "tc-first,tc-next",
+    );
+    expect(cards[0]!.getAttribute("data-active")).toBe("true");
+  });
+
+  test("settles a blank-separated run without losing its ordered steps", () => {
+    const message: DisplayMessage = {
+      id: "m-blank-settled",
+      role: "assistant",
+      contentBlocks: [
+        thinkingBlock("plan"),
+        textBlock("\n"),
+        toolUseBlock({
+          id: "tc-first",
+          name: "bash",
+          input: {},
+          completedAt: 1,
+        }),
+        textBlock("  "),
+        thinkingBlock("done"),
+        textBlock("\n"),
+      ],
+    };
+
+    const { container, queryByRole } = render(
+      <TranscriptMessageBody message={message} onSurfaceAction={noop} />,
+    );
+
+    expect(queryByRole("button", { name: "Earlier activity" })).toBeNull();
+    const card = container.querySelector("[data-testid='tool-progress-card']");
+    expect(card?.getAttribute("data-item-kinds")).toBe(
+      "thinking,toolCall,thinking",
+    );
+    expect(card?.getAttribute("data-active")).toBe("false");
+    expect(container.querySelector("[data-testid='markdown']")).toBeNull();
+  });
+
+  test("keeps partial and complete no-response sentinels hidden across blanks", () => {
+    for (const [id, sentinel] of [
+      ["partial", "<no_resp"],
+      ["complete", "<no_response/>"],
+    ] as const) {
+      const html = renderMessage(
+        {
+          id: `m-no-response-${id}`,
+          role: "assistant",
+          contentBlocks: [
+            textBlock("\n"),
+            textBlock(sentinel),
+            textBlock("  "),
+          ],
+        },
+        { isStreaming: true },
+      );
+      expect(html).not.toContain(sentinel);
+    }
+  });
+
+  test("renders ordinary text that only begins like a no-response sentinel", async () => {
+    const { findByText } = render(
+      <TranscriptMessageBody
+        message={{
+          id: "m-no-response-lookalike",
+          role: "assistant",
+          contentBlocks: [
+            textBlock("\n"),
+            textBlock("<no_responseful text"),
+            textBlock("\t"),
+          ],
+        }}
+        onSurfaceAction={noop}
+        isStreaming
+      />,
+    );
+
+    expect(await findByText("<no_responseful text")).toBeTruthy();
+  });
+
+  test("keeps nonblank prose as an exact boundary between activity runs", () => {
+    const message: DisplayMessage = {
+      id: "m-visible-separator",
+      role: "assistant",
+      contentBlocks: [
+        toolUseBlock({
+          id: "tc-first",
+          name: "bash",
+          input: {},
+          completedAt: 1,
+        }),
+        textBlock("  Intermediate result.  "),
+        toolUseBlock({
+          id: "tc-next",
+          name: "bash",
+          input: {},
+          completedAt: 2,
+        }),
+        textBlock("Final answer."),
+      ],
+    };
+
+    const { container, getByRole, getByText } = render(
+      <TranscriptMessageBody message={message} onSurfaceAction={noop} />,
+    );
+
+    expect(getByRole("button", { name: "Earlier activity" })).toBeTruthy();
+    fireEvent.click(getByRole("button", { name: "Earlier activity" }));
+    expect(
+      Array.from(container.querySelectorAll("[data-testid='markdown']")).some(
+        (element) => element.textContent === "  Intermediate result.  ",
+      ),
+    ).toBe(true);
+    expect(getByText("Final answer.")).toBeTruthy();
   });
 
   test("renders a lone bash tool_use as the inline chip, not a card", () => {

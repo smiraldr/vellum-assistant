@@ -907,6 +907,7 @@ export function TranscriptMessageBody({
             <MultiActivityGroup
               toolCalls={groupCardToolCalls}
               items={groupCardItems}
+              active={isStreaming && isLatestMessage && isLastGroup}
               messageId={message.id}
               groupIndex={groupIndex}
               onOpenRuleEditor={onOpenRuleEditor}

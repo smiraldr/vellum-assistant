@@ -7,6 +7,7 @@ import {
   activityItemsToCardData,
   groupContentBlocks,
   groupOptionsForMessage,
+  type ContentBlockGroup,
 } from "@/domains/chat/transcript/message-content";
 import {
   acpRunIdForCall,
@@ -17,6 +18,7 @@ import {
 } from "@/domains/chat/transcript/transcript-message-body-shared";
 import { useHideThinkingUi } from "@/domains/chat/hooks/use-hide-thinking-ui";
 import { useTranscriptMessageById } from "@/domains/chat/hooks/use-transcript-message-by-id";
+import { useTranscriptMessages } from "@/domains/chat/transcript/use-transcript-messages";
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
 import type { ToolCallCardItem } from "@/domains/chat/utils/tool-call-card-utils";
 
@@ -32,6 +34,16 @@ export interface ProcessCardBacking {
   acpById: Record<string, unknown>;
   acpByToolUseId: Map<string, string>;
   backgroundTaskById: Record<string, unknown>;
+}
+
+/** Whether the selected activity group is the final rendered content group. */
+export function isLastActivityGroup(
+  groups: ContentBlockGroup[],
+  groupIndex: number,
+): boolean {
+  return (
+    groups[groupIndex]?.type === "activity" && groupIndex === groups.length - 1
+  );
 }
 
 /**
@@ -91,8 +103,14 @@ export function filterCardBackedProcessCalls(
 export function useLiveActivityGroup(
   messageId: string | undefined,
   groupIndex: number | undefined,
-): { items: ToolCallCardItem[]; toolCalls: ChatMessageToolCall[] } | null {
+): {
+  items: ToolCallCardItem[];
+  toolCalls: ChatMessageToolCall[];
+  isLastGroup: boolean;
+  isLatestMessage: boolean;
+} | null {
   const message = useTranscriptMessageById(messageId);
+  const transcriptMessages = useTranscriptMessages();
   const hideThinkingUi = useHideThinkingUi();
   // Card-backed process suppression reads the same store slices the
   // transcript subscribes to, so a card's backing flipping (an entry
@@ -119,19 +137,24 @@ export function useLiveActivityGroup(
       return null;
     }
     const { cardItems, toolCalls } = activityItemsToCardData(group.items);
-    return filterCardBackedProcessCalls(cardItems, toolCalls, {
-      workflow: {
-        byId: workflowById,
-        byToolUseId: workflowByToolUseId,
-        notFoundRunIds: workflowNotFoundRunIds,
-        hydrationFailedRunIds: workflowHydrationFailedRunIds,
-      },
-      acpById,
-      acpByToolUseId,
-      backgroundTaskById,
-    });
+    return {
+      ...filterCardBackedProcessCalls(cardItems, toolCalls, {
+        workflow: {
+          byId: workflowById,
+          byToolUseId: workflowByToolUseId,
+          notFoundRunIds: workflowNotFoundRunIds,
+          hydrationFailedRunIds: workflowHydrationFailedRunIds,
+        },
+        acpById,
+        acpByToolUseId,
+        backgroundTaskById,
+      }),
+      isLastGroup: isLastActivityGroup(groups, groupIndex),
+      isLatestMessage: transcriptMessages.at(-1) === message,
+    };
   }, [
     message,
+    transcriptMessages,
     groupIndex,
     hideThinkingUi,
     workflowById,

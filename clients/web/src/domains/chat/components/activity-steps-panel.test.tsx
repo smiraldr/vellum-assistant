@@ -12,9 +12,10 @@
 
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
-import { cleanup, fireEvent, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render } from "@testing-library/react";
 
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
+import type { DisplayMessage } from "@/domains/chat/types/types";
 import type { ToolCallCardItem } from "@/domains/chat/utils/tool-call-card-utils";
 import { toolCallStatusWireFields } from "@/domains/chat/utils/message-test-helpers";
 
@@ -35,9 +36,14 @@ mock.module("@/generated/daemon/sdk.gen", () => sdkMock);
 
 const { ActivityStepsPanel } =
   await import("@/domains/chat/components/activity-steps-panel");
+const { useChatSessionStore } =
+  await import("@/domains/chat/chat-session-store");
+const { useTurnStore } = await import("@/domains/chat/turn-store");
 
 afterEach(() => {
   cleanup();
+  useTurnStore.setState({ phase: "idle" });
+  useChatSessionStore.setState({ snapshot: null, optimisticSends: [] });
 });
 
 function makeToolCall(
@@ -82,6 +88,20 @@ function renderPanel(onClose: () => void = () => {}) {
   );
 }
 
+function seedTranscript(messages: DisplayMessage[]): void {
+  act(() => {
+    useChatSessionStore.setState({
+      snapshot: {
+        messages,
+        seq: null,
+        hasMore: false,
+        oldestTimestamp: null,
+        oldestMessageId: null,
+      },
+    });
+  });
+}
+
 describe("ActivityStepsPanel — level 1 timeline", () => {
   test("renders phase headers and step pills for the snapshot items", () => {
     const { getAllByTestId, getByLabelText } = renderPanel();
@@ -101,6 +121,85 @@ describe("ActivityStepsPanel — level 1 timeline", () => {
     // Timing data present → duration summary.
     expect(getByText(/Worked for/)).toBeTruthy();
     expect(getByText("2 steps")).toBeTruthy();
+  });
+
+  test("active trailing thinking settles when the turn becomes idle", () => {
+    const items: ToolCallCardItem[] = [
+      { kind: "toolCall", toolCall: BASH },
+      { kind: "thinking", text: "Preparing the next step" },
+    ];
+    useTurnStore.setState({ phase: "thinking" });
+    const { getAllByText, queryByText, getByText } = render(
+      <ActivityStepsPanel
+        payload={{ items, toolCalls: [BASH], active: true }}
+        onClose={() => {}}
+      />,
+    );
+
+    expect(getAllByText("Thinking").length).toBeGreaterThan(0);
+    expect(queryByText(/Worked for/)).toBeNull();
+
+    act(() => useTurnStore.setState({ phase: "idle" }));
+    expect(getByText(/Worked for/)).toBeTruthy();
+  });
+
+  test("an open thinking detail follows appended steps and a blank-to-prose boundary", () => {
+    const nextTool = makeToolCall({
+      id: "tc-2",
+      name: "bash",
+      status: "completed",
+      input: { command: "git diff", activity: "Checking the diff" },
+      startedAt: 2_000,
+      completedAt: 3_000,
+    });
+    const message = (
+      thinking: string,
+      includeNextTool: boolean,
+      trailingText: string,
+    ): DisplayMessage => ({
+      id: "m-live",
+      role: "assistant",
+      contentBlocks: [
+        { type: "tool_use", toolCall: BASH },
+        { type: "text", text: "\n" },
+        { type: "thinking", thinking },
+        ...(includeNextTool
+          ? ([
+              { type: "text", text: "  " },
+              { type: "tool_use", toolCall: nextTool },
+            ] as const)
+          : []),
+        { type: "text", text: trailingText },
+      ],
+    });
+
+    useTurnStore.setState({ phase: "thinking" });
+    seedTranscript([message("partial reasoning", false, "\n")]);
+    const { getByLabelText, getByRole, getByText } = render(
+      <ActivityStepsPanel
+        payload={{
+          messageId: "m-live",
+          groupIndex: 0,
+          items: ITEMS,
+          toolCalls: [BASH],
+          active: true,
+        }}
+        onClose={() => {}}
+      />,
+    );
+
+    fireEvent.click(getByLabelText("View thinking"));
+    expect(getByText("partial reasoning")).toBeTruthy();
+
+    seedTranscript([message("partial reasoning and more", true, "\n")]);
+    expect(getByText("partial reasoning and more")).toBeTruthy();
+
+    seedTranscript([
+      message("partial reasoning and more", true, "Visible response."),
+    ]);
+    fireEvent.click(getByRole("button", { name: /back to all steps/i }));
+    expect(getByText("3 steps")).toBeTruthy();
+    expect(getByText(/Worked for/)).toBeTruthy();
   });
 
   test("close button fires onClose", () => {

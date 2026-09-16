@@ -442,6 +442,8 @@ export interface ActivityStepsPayload {
   groupIndex?: number;
   items: ToolCallCardItem[];
   toolCalls: ChatMessageToolCall[];
+  /** Open-time evidence that this was the active trailing transcript group. */
+  active?: boolean;
 }
 
 /**
