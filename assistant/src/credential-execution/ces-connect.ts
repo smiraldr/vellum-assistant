@@ -17,9 +17,9 @@ import {
 } from "./client.js";
 import {
   type CesProcessManager,
+  type CesProcessManagerConfig,
   CesUnavailableError,
   createCesProcessManager,
-  type CesProcessManagerConfig,
 } from "./process-manager.js";
 
 const log = getLogger("ces-connect");
