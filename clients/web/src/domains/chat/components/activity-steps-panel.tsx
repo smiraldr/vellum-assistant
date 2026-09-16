@@ -51,7 +51,7 @@ import {
 } from "@/domains/chat/components/web-search/web-search-step-row";
 import { useLiveActivityGroup } from "@/domains/chat/hooks/use-live-activity-group";
 import { useToolCallCardDataFromItems } from "@/domains/chat/hooks/use-tool-call-card-data";
-import { isSending, useTurnStore } from "@/domains/chat/turn-store";
+import { isActivityLive, useTurnStore } from "@/domains/chat/turn-store";
 import {
   toolDetailPayloadFromToolCall,
   type ToolCallCardStep,
@@ -100,7 +100,7 @@ export function ActivityStepsPanel({
     ? live.isLastGroup && live.isLatestMessage
     : payload.messageId == null;
   const active =
-    payload.active === true && ownsActiveGroup && isSending(turnPhase);
+    payload.active === true && ownsActiveGroup && isActivityLive(turnPhase);
   const cardData = useToolCallCardDataFromItems(items, { active });
 
   const outcomes = countStepOutcomes(cardData.steps);

@@ -165,6 +165,14 @@ describe("streaming thinking shimmer wiring", () => {
     expect(getByText("Thinking")).toBeTruthy();
   });
 
+  test("awaiting user input → static 'Thinking' label, no shimmer", () => {
+    useTurnStore.setState({ phase: "awaiting_user_input" });
+    const { getByTestId, queryByTestId, getByText } = renderTurn();
+    expect(getByTestId("thought-process-link")).toBeTruthy();
+    expect(queryByTestId("thought-process-loading")).toBeNull();
+    expect(getByText("Thinking")).toBeTruthy();
+  });
+
   test("completed tool plus blank plus active thinking keeps the merged header shimmering", () => {
     useTurnStore.setState({ phase: "thinking" });
     const { getByTestId } = renderTurn(
@@ -176,8 +184,8 @@ describe("streaming thinking shimmer wiring", () => {
     expect(getByTestId("streaming-shimmer")).toBeTruthy();
   });
 
-  test("the same merged header is static after the turn settles", () => {
-    useTurnStore.setState({ phase: "idle" });
+  test("the same merged header is static while awaiting user input", () => {
+    useTurnStore.setState({ phase: "awaiting_user_input" });
     const { getByTestId, queryByTestId } = renderTurn(
       assistantToolThenThinkingItem("a-tool-thinking-settled"),
     );
