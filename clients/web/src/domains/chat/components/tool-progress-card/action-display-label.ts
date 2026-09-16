@@ -20,3 +20,23 @@ export const ACTION_DISPLAY_TRANSLATION_KEYS = {
   navigate: "actionDisplay.navigate",
   terminal: "actionDisplay.terminal",
 } as const satisfies Record<ActionDisplayKey, string>;
+
+type ActionDisplayTranslationKey =
+  (typeof ACTION_DISPLAY_TRANSLATION_KEYS)[ActionDisplayKey];
+
+export function resolveActionDisplayLabel(
+  input: {
+    activity?: string | null;
+    actionDisplayKey?: ActionDisplayKey | null;
+    fallback?: string | null;
+  },
+  translate: (key: ActionDisplayTranslationKey) => string,
+): string {
+  if (input.activity) {
+    return input.activity;
+  }
+  if (input.actionDisplayKey) {
+    return translate(ACTION_DISPLAY_TRANSLATION_KEYS[input.actionDisplayKey]);
+  }
+  return input.fallback ?? "";
+}

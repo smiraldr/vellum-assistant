@@ -305,17 +305,30 @@ describe("Transcript", () => {
   });
 
   test("subscribes only intersecting active session headers to the clock", () => {
-    const callbacks: IntersectionObserverCallback[] = [];
+    let observerCallback: IntersectionObserverCallback | undefined;
+    let observerRoot: Element | Document | null | undefined;
+    let activeObserverCount = 0;
+    const observedTargets: Element[] = [];
     const originalIntersectionObserver = globalThis.IntersectionObserver;
     globalThis.IntersectionObserver = class implements IntersectionObserver {
-      root = null;
+      root: Element | Document | null;
       rootMargin = "0px";
       thresholds = [0];
-      constructor(callback: IntersectionObserverCallback) {
-        callbacks.push(callback);
+      constructor(
+        callback: IntersectionObserverCallback,
+        options?: IntersectionObserverInit,
+      ) {
+        observerCallback = callback;
+        observerRoot = options?.root;
+        this.root = options?.root ?? null;
+        activeObserverCount += 1;
       }
-      disconnect() {}
-      observe() {}
+      disconnect() {
+        activeObserverCount -= 1;
+      }
+      observe(target: Element) {
+        observedTargets.push(target);
+      }
       takeRecords() {
         return [];
       }
@@ -336,34 +349,52 @@ describe("Transcript", () => {
     try {
       const first = assistantMessage("a-one", "First active reply");
       const second = assistantMessage("a-two", "Second active reply");
+      const completed = assistantMessage("a-done", "Completed reply");
       for (const [item, sessionId] of [
         [first, "session-1"],
         [second, "session-2"],
+        [completed, "session-done"],
       ] as const) {
         if (item.kind === "message") {
           item.message.timestamp = 2_000;
           item.message.modeSession = { mode: "browser", id: sessionId };
         }
       }
-      render(
+      const { getByTestId } = render(
         <Transcript
-          items={[first, second]}
+          items={[first, second, completed]}
           conversationId="conv-1"
           modeSessionDescriptors={[
             activeDescriptor("session-1", "a-one"),
-            activeDescriptor("session-2", "a-two"),
+            {
+              ...activeDescriptor("session-2", "a-two"),
+              runtimeState: "waiting",
+            },
+            completedDescriptor("session-done"),
           ]}
           sessionGroupsEnabled
           sessionDisclosureState={openDisclosure}
           onSurfaceAction={noop}
         />,
       );
-      expect(callbacks).toHaveLength(2);
+      expect(observerCallback).toBeDefined();
+      expect(observerRoot).toBe(getByTestId("transcript-scroll-container"));
+      expect(activeObserverCount).toBe(1);
+      expect(new Set(observedTargets).size).toBe(2);
       const bodyRenders = markdownRenderCount;
 
       act(() => {
-        callbacks[0]?.(
-          [{ isIntersecting: true } as IntersectionObserverEntry],
+        observerCallback?.(
+          [
+            {
+              target: observedTargets[0],
+              isIntersecting: true,
+            } as IntersectionObserverEntry,
+            {
+              target: observedTargets[1],
+              isIntersecting: false,
+            } as IntersectionObserverEntry,
+          ],
           {} as IntersectionObserver,
         );
       });
@@ -373,8 +404,13 @@ describe("Transcript", () => {
       expect(markdownRenderCount).toBe(bodyRenders);
 
       act(() => {
-        callbacks[0]?.(
-          [{ isIntersecting: false } as IntersectionObserverEntry],
+        observerCallback?.(
+          [
+            {
+              target: observedTargets[0],
+              isIntersecting: false,
+            } as IntersectionObserverEntry,
+          ],
           {} as IntersectionObserver,
         );
       });
@@ -384,6 +420,39 @@ describe("Transcript", () => {
       interval.mockRestore();
       clear.mockRestore();
       dateNow.mockRestore();
+    }
+  });
+
+  test("keeps active clocks eligible when IntersectionObserver is unavailable", () => {
+    const originalIntersectionObserver = globalThis.IntersectionObserver;
+    delete (
+      globalThis as { IntersectionObserver?: typeof IntersectionObserver }
+    ).IntersectionObserver;
+    const interval = spyOn(globalThis, "setInterval").mockImplementation(
+      (() =>
+        1 as unknown as ReturnType<
+          typeof setInterval
+        >) as unknown as typeof setInterval,
+    );
+    try {
+      const item = assistantMessage("a-one", "Active reply");
+      if (item.kind === "message") {
+        item.message.modeSession = { mode: "browser", id: "session-1" };
+      }
+      render(
+        <Transcript
+          items={[item]}
+          conversationId="conv-1"
+          modeSessionDescriptors={[activeDescriptor("session-1", "a-one")]}
+          sessionGroupsEnabled
+          sessionDisclosureState={openDisclosure}
+          onSurfaceAction={noop}
+        />,
+      );
+      expect(interval).toHaveBeenCalledTimes(1);
+    } finally {
+      globalThis.IntersectionObserver = originalIntersectionObserver;
+      interval.mockRestore();
     }
   });
 

@@ -31,7 +31,7 @@ import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
 import { truncate } from "@/domains/chat/utils/truncate";
 import { isToolCallRunning } from "@/domains/chat/utils/tool-call-status";
 import { Trans, useTranslation } from "@/i18n";
-import { ACTION_DISPLAY_TRANSLATION_KEYS } from "@/domains/chat/components/tool-progress-card/action-display-label";
+import { resolveActionDisplayLabel } from "@/domains/chat/components/tool-progress-card/action-display-label";
 
 /**
  * Hard character cap for the thinking text shown in the collapsed header's
@@ -414,9 +414,13 @@ function UnifiedMultiActivityGroup(
         </span>
       );
     }
-    return cardData.currentStepActionDisplayKey
-      ? t(ACTION_DISPLAY_TRANSLATION_KEYS[cardData.currentStepActionDisplayKey])
-      : cardData.currentStepInfo;
+    return resolveActionDisplayLabel(
+      {
+        actionDisplayKey: cardData.currentStepActionDisplayKey,
+        fallback: cardData.currentStepInfo,
+      },
+      t,
+    );
   }, [
     cardData.currentStepActionDisplayKey,
     cardData.currentStepInfo,

@@ -1,11 +1,12 @@
 import type { ModeSession } from "../api/mode-session.js";
+import type { BrowserOperationLifecycle } from "../browser/operations.js";
 import type {
   ConversationModeSessionCoordinator,
   ModeSessionSourceHandle,
   ModeSessionTerminalDisposition,
 } from "./conversation-mode-session.js";
 
-export type BrowserOperationLifecycle = "action" | "terminal" | "status";
+export type { BrowserOperationLifecycle } from "../browser/operations.js";
 
 type ModeSessionCoordinator = Pick<
   ConversationModeSessionCoordinator,

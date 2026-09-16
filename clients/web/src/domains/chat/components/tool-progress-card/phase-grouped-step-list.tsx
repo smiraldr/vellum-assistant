@@ -37,7 +37,7 @@ import { Fragment, type ReactNode } from "react";
 import { Tooltip, Typography } from "@vellumai/design-library";
 
 import type { IconName } from "@/domains/chat/components/tool-progress-card/derive-step-label";
-import { ACTION_DISPLAY_TRANSLATION_KEYS } from "@/domains/chat/components/tool-progress-card/action-display-label";
+import { resolveActionDisplayLabel } from "@/domains/chat/components/tool-progress-card/action-display-label";
 import { ThreeDotIndicator } from "@/domains/chat/components/tool-progress-card/three-dot-indicator";
 import { thinkingPreview } from "@/domains/chat/utils/thinking-preview";
 import {
@@ -687,10 +687,14 @@ export function DefaultStepPill({ step }: { step: ToolCallCardStep }) {
           className="h-3.5 w-3.5 shrink-0 text-[var(--content-secondary)]"
         />
         <PillText>
-          {step.activity ||
-            (step.actionDisplayKey
-              ? t(ACTION_DISPLAY_TRANSLATION_KEYS[step.actionDisplayKey])
-              : step.info)}
+          {resolveActionDisplayLabel(
+            {
+              activity: step.activity,
+              actionDisplayKey: step.actionDisplayKey,
+              fallback: step.info,
+            },
+            t,
+          )}
         </PillText>
       </StepPill>
     );

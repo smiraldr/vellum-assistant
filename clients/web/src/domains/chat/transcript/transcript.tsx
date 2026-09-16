@@ -10,6 +10,7 @@ import {
   useState,
   type ClipboardEvent as ReactClipboardEvent,
   type ReactNode,
+  type RefObject,
 } from "react";
 
 import { writeSelectionClipboard } from "@vellumai/design-library";
@@ -31,7 +32,6 @@ import { useContentAboveViewport } from "@/domains/chat/transcript/use-content-a
 import { useHideIdleScrollbar } from "@/domains/chat/transcript/use-hide-idle-scrollbar";
 import { useViewportMinHeight } from "@/domains/chat/transcript/use-viewport-min-height";
 import { useIsMobile } from "@/hooks/use-is-mobile";
-import { useInView } from "@/hooks/use-in-view";
 import type { ConfirmationDecision } from "@/types/event-types";
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
 import type { DisplayMessage } from "@/domains/chat/types/types";
@@ -223,6 +223,116 @@ function segmentSummaryInput(
   };
 }
 
+function segmentLiveState(
+  segment: SessionGroupSegment | undefined,
+  descriptor: ModeSessionDescriptor | undefined,
+) {
+  return segment?.containsLastBoundary &&
+    descriptor?.summary.status === "active"
+    ? (descriptor.runtimeState ?? "working")
+    : null;
+}
+
+function isClockEligible(
+  segment: SessionGroupSegment | undefined,
+  descriptor: ModeSessionDescriptor | undefined,
+) {
+  const state = segmentLiveState(segment, descriptor);
+  return state === "working" || state === "waiting";
+}
+
+function sameIds(left: ReadonlySet<string>, right: ReadonlySet<string>) {
+  return (
+    left.size === right.size && [...left].every((value) => right.has(value))
+  );
+}
+
+function useSessionHeaderVisibility(
+  rootRef: RefObject<HTMLDivElement | null>,
+  eligibleSessionIds: readonly string[],
+  resetKey: string | null,
+) {
+  const nodesRef = useRef(new Map<string, HTMLButtonElement>());
+  const observerRef = useRef<IntersectionObserver | null>(null);
+  const [visibleSessionIds, setVisibleSessionIds] = useState<
+    ReadonlySet<string>
+  >(new Set());
+  const eligibleKey = eligibleSessionIds.join("\0");
+
+  const registerHeader = useCallback(
+    (sessionId: string, node: HTMLButtonElement | null) => {
+      const previous = nodesRef.current.get(sessionId);
+      if (previous && previous !== node) {
+        observerRef.current?.unobserve(previous);
+      }
+      if (!node) {
+        nodesRef.current.delete(sessionId);
+        return;
+      }
+      nodesRef.current.set(sessionId, node);
+      observerRef.current?.observe(node);
+    },
+    [],
+  );
+
+  useLayoutEffect(() => {
+    const eligible = new Set(eligibleSessionIds);
+    const useVisibleFallback =
+      typeof IntersectionObserver === "undefined" || !rootRef.current;
+    if (useVisibleFallback) {
+      setVisibleSessionIds((current) =>
+        sameIds(current, eligible) ? current : eligible,
+      );
+      return;
+    }
+
+    setVisibleSessionIds((current) =>
+      current.size === 0 ? current : new Set(),
+    );
+    const sessionIdByElement = new Map<Element, string>();
+    const observer = new IntersectionObserver(
+      (entries) => {
+        setVisibleSessionIds((current) => {
+          const next = new Set(current);
+          for (const entry of entries) {
+            const sessionId = sessionIdByElement.get(entry.target);
+            if (!sessionId) {
+              continue;
+            }
+            if (entry.isIntersecting) {
+              next.add(sessionId);
+            } else {
+              next.delete(sessionId);
+            }
+          }
+          return sameIds(current, next) ? current : next;
+        });
+      },
+      { root: rootRef.current },
+    );
+    observerRef.current = observer;
+    for (const sessionId of eligibleSessionIds) {
+      const node = nodesRef.current.get(sessionId);
+      if (node) {
+        sessionIdByElement.set(node, sessionId);
+        observer.observe(node);
+      }
+    }
+    return () => {
+      observer.disconnect();
+      if (observerRef.current === observer) {
+        observerRef.current = null;
+      }
+    };
+  }, [eligibleKey, eligibleSessionIds, resetKey, rootRef]);
+
+  const isHeaderVisible = useCallback(
+    (sessionId: string) => visibleSessionIds.has(sessionId),
+    [visibleSessionIds],
+  );
+  return { isHeaderVisible, registerHeader };
+}
+
 function SessionSegment({
   segment,
   descriptor,
@@ -231,6 +341,8 @@ function SessionSegment({
   onBeforeToggle,
   clockConnected = true,
   clockNow,
+  clockHeaderVisible = false,
+  registerClockHeader,
 }: {
   segment?: SessionGroupSegment;
   descriptor?: ModeSessionDescriptor;
@@ -239,24 +351,29 @@ function SessionSegment({
   onBeforeToggle?: () => void;
   clockConnected?: boolean;
   clockNow?: number;
+  clockHeaderVisible?: boolean;
+  registerClockHeader?: (
+    sessionId: string,
+    node: HTMLButtonElement | null,
+  ) => void;
 }) {
-  const headerRef = useRef<HTMLButtonElement>(null);
-  const setHeaderRef = useCallback((node: HTMLButtonElement | null) => {
-    headerRef.current = node;
-  }, []);
-  const headerInView = useInView(headerRef);
   const open = segment
     ? disclosure.isSessionOpen(segment.modeSession.id)
     : true;
-  const liveState =
-    segment?.containsLastBoundary && descriptor?.summary.status === "active"
-      ? (descriptor.runtimeState ?? "working")
-      : null;
+  const clockEligible = isClockEligible(segment, descriptor);
+  const setHeaderRef = useCallback(
+    (node: HTMLButtonElement | null) => {
+      if (segment && clockEligible) {
+        registerClockHeader?.(segment.modeSession.id, node);
+      }
+    },
+    [clockEligible, registerClockHeader, segment],
+  );
   const tickingNow = useSessionDurationClock(
     clockNow === undefined &&
       clockConnected &&
-      headerInView &&
-      (liveState === "working" || liveState === "waiting"),
+      clockHeaderVisible &&
+      clockEligible,
   );
   const now = clockNow ?? tickingNow;
   return (
@@ -283,7 +400,7 @@ function SessionSegment({
         disclosure.setSessionOpen(segment.modeSession.id, nextOpen);
       }}
       headerVisible={Boolean(segment && descriptor)}
-      headerRef={setHeaderRef}
+      headerRef={clockEligible ? setHeaderRef : undefined}
     >
       {children}
     </SessionGroupRow>
@@ -508,6 +625,24 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
         return { conversationId, segments };
       });
     }, [conversationId, grouped]);
+    const clockEligibleSessionIds = useMemo(() => {
+      const ids = new Set<string>();
+      for (const item of [...grouped.history, ...grouped.latest]) {
+        if (item.kind !== "sessionGroup" || !item.containsLastBoundary) {
+          continue;
+        }
+        const descriptor = descriptorsById.get(item.modeSession.id);
+        if (isClockEligible(item, descriptor)) {
+          ids.add(item.modeSession.id);
+        }
+      }
+      return [...ids];
+    }, [descriptorsById, grouped]);
+    const sessionHeaderVisibility = useSessionHeaderVisibility(
+      scrollRef,
+      clockEligibleSessionIds,
+      conversationId,
+    );
     const sessionByMemberId = useMemo(() => {
       const result = new Map<string, string>();
       for (const item of [...grouped.history, ...grouped.latest]) {
@@ -707,6 +842,10 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
                 onBeforeToggle={rest.onBeforeSessionDisclosureToggle}
                 clockConnected={rest.sessionClockConnected}
                 clockNow={rest.sessionClockNow}
+                clockHeaderVisible={sessionHeaderVisibility.isHeaderVisible(
+                  item.modeSession.id,
+                )}
+                registerClockHeader={sessionHeaderVisibility.registerHeader}
               >
                 {renderHistoryRows(item.items)}
               </SessionSegment>
@@ -795,6 +934,10 @@ export const Transcript = forwardRef<TranscriptHandle, TranscriptProps>(
                 onBeforeToggle={rest.onBeforeSessionDisclosureToggle}
                 clockConnected={rest.sessionClockConnected}
                 clockNow={rest.sessionClockNow}
+                clockHeaderVisible={sessionHeaderVisibility.isHeaderVisible(
+                  item.modeSession.id,
+                )}
+                registerClockHeader={sessionHeaderVisibility.registerHeader}
               >
                 {preservesLatestResponse ? (
                   <LatestTurnResponse

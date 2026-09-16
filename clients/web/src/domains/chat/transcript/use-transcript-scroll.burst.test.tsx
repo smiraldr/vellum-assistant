@@ -522,6 +522,64 @@ describe("useTranscriptScroll — load-older burst regression", () => {
     expect(onLoadOlderCalls).toBe(2);
   });
 
+  test("expires disclosure suppression when layout emits no scroll event", () => {
+    let scheduledFrame: FrameRequestCallback | undefined;
+    const originalRequestAnimationFrame = globalThis.requestAnimationFrame;
+    const originalCancelAnimationFrame = globalThis.cancelAnimationFrame;
+    globalThis.requestAnimationFrame = (callback) => {
+      scheduledFrame = callback;
+      return 1;
+    };
+    globalThis.cancelAnimationFrame = () => {};
+    try {
+      let onLoadOlderCalls = 0;
+      const scrollEl = createScrollElement({
+        scrollTop: 0,
+        scrollHeight: 400,
+        clientHeight: 800,
+      });
+      const renderedIds = ["m1"];
+      const transcriptRef = {
+        current: {
+          scrollToLatest: () => {},
+          getScrollElement: () => scrollEl,
+          getRenderedMessageIds: () => renderedIds,
+        },
+      };
+      const initialItems = [makeMessageItem("m1")];
+      const args: UseTranscriptScrollArgs = {
+        transcriptRef: transcriptRef as any,
+        items: initialItems,
+        conversationId: "c1",
+        hasMore: false,
+        isLoadingOlder: false,
+        onLoadOlder: () => {
+          onLoadOlderCalls += 1;
+        },
+      };
+      const { result, rerender } = renderHook(
+        (props: UseTranscriptScrollArgs) => useTranscriptScroll(props),
+        { initialProps: args },
+      );
+      rerender({ ...args, hasMore: true });
+
+      act(() => result.current.prepareForDisclosureToggle());
+      expect(scheduledFrame).toBeDefined();
+      act(() => scheduledFrame?.(0));
+
+      renderedIds.push("m2");
+      rerender({
+        ...args,
+        hasMore: true,
+        items: [...initialItems, makeMessageItem("m2")],
+      });
+      expect(onLoadOlderCalls).toBe(1);
+    } finally {
+      globalThis.requestAnimationFrame = originalRequestAnimationFrame;
+      globalThis.cancelAnimationFrame = originalCancelAnimationFrame;
+    }
+  });
+
   test("reveals a regrouped saved anchor before applying prepend correction", () => {
     const scrollEl = createScrollElement({
       scrollTop: 100,

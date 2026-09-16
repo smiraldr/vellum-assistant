@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
+import { renderHook } from "@testing-library/react";
 
 import {
   activeModeSessionIdsForRefresh,
   aggregateBackgroundToolCompletions,
   aggregateModeSessionDescriptors,
   aggregateSubagentNotifications,
+  useAcceptedModeSessionDescriptors,
 } from "@/domains/chat/transcript/use-history-pagination";
 import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
 import type { RuntimeSubagentNotification } from "@/domains/chat/api/messages";
@@ -146,6 +148,25 @@ describe("aggregateBackgroundToolCompletions", () => {
 });
 
 describe("mode session descriptor aggregation", () => {
+  test("keeps a stable empty result while history pages are loading", () => {
+    const { result, rerender } = renderHook(
+      ({ conversationId, pages }) =>
+        useAcceptedModeSessionDescriptors(conversationId, pages),
+      {
+        initialProps: {
+          conversationId: "conv-1" as string | null,
+          pages: undefined as PaginatedHistoryResult[] | undefined,
+        },
+      },
+    );
+    const initial = result.current;
+
+    rerender({ conversationId: "conv-1", pages: [] });
+
+    expect(result.current).toBe(initial);
+    expect(result.current).toEqual([]);
+  });
+
   test("keeps the newest revision while preserving independent page content", () => {
     const result = aggregateModeSessionDescriptors([
       page(undefined, undefined, [descriptor("session-a", 2)]),

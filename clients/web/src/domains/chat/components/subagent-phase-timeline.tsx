@@ -31,7 +31,7 @@ import {
   TimelineNode,
   type PhaseSection,
 } from "@/domains/chat/components/tool-progress-card/phase-grouped-step-list";
-import { ACTION_DISPLAY_TRANSLATION_KEYS } from "@/domains/chat/components/tool-progress-card/action-display-label";
+import { resolveActionDisplayLabel } from "@/domains/chat/components/tool-progress-card/action-display-label";
 import { HeaderStepCarousel } from "@/domains/chat/components/tool-progress-card/header-step-carousel";
 import { ToolStepPill } from "@/domains/chat/components/tool-progress-card/tool-step-pill";
 import {
@@ -556,16 +556,14 @@ const SubagentPhaseRow = memo(function SubagentPhaseRow({
                         key={stepKey(step, stepIdx)}
                         variant="tool"
                         iconName={step.iconName}
-                        label={
-                          step.activity ||
-                          (step.actionDisplayKey
-                            ? t(
-                                ACTION_DISPLAY_TRANSLATION_KEYS[
-                                  step.actionDisplayKey
-                                ],
-                              )
-                            : step.info || step.title)
-                        }
+                        label={resolveActionDisplayLabel(
+                          {
+                            activity: step.activity,
+                            actionDisplayKey: step.actionDisplayKey,
+                            fallback: step.info || step.title,
+                          },
+                          t,
+                        )}
                         ariaLabel={t("subagentPhaseTimeline.viewToolDetails")}
                         onClick={() => onStepDetailClick(detailKey)}
                       />

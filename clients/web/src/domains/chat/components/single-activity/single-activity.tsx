@@ -44,7 +44,7 @@ import { useMemo } from "react";
 import { cn } from "@/utils/misc";
 import { StreamingShimmerText } from "@/domains/chat/components/streaming-shimmer-text";
 import { deriveStepLabel } from "@/domains/chat/components/tool-progress-card/derive-step-label";
-import { ACTION_DISPLAY_TRANSLATION_KEYS } from "@/domains/chat/components/tool-progress-card/action-display-label";
+import { resolveActionDisplayLabel } from "@/domains/chat/components/tool-progress-card/action-display-label";
 import {
   toolDetailPayloadFromToolCall,
   type ToolCallCardStep,
@@ -270,11 +270,10 @@ export function SingleActivity(props: SingleActivityProps) {
     const { toolCall } = props;
     const { activity, info, title, actionDisplayKey } =
       deriveStepLabel(toolCall);
-    const label =
-      activity ||
-      (actionDisplayKey
-        ? t(ACTION_DISPLAY_TRANSLATION_KEYS[actionDisplayKey])
-        : info || title);
+    const label = resolveActionDisplayLabel(
+      { activity, actionDisplayKey, fallback: info || title },
+      t,
+    );
     const isError =
       Boolean(toolCall.isError) ||
       toolCall.confirmationDecision === "denied" ||

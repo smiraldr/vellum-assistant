@@ -274,7 +274,7 @@ describe("ConversationEvictor", () => {
     test("aborts subagents for each evicted session", () => {
       const s1 = createMockSession();
       sessions.set("a", s1);
-      // Never touched — will be TTL evicted
+      // Never touched, so it will be TTL evicted.
 
       evictor.sweep();
 

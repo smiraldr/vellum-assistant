@@ -98,7 +98,7 @@ export function aggregateModeSessionDescriptors(
   previous: ModeSessionDescriptor[] = [],
 ): ModeSessionDescriptor[] {
   if (!pages?.length) {
-    return [];
+    return previous;
   }
   const byId = new Map<string, ModeSessionDescriptor>();
   const representedIds = new Set<string>();
@@ -145,6 +145,36 @@ export function activeModeSessionIdsForRefresh(
     .filter((descriptor) => descriptor.summary.status === "active")
     .slice(0, MAX_REFRESHED_MODE_SESSION_IDS)
     .map((descriptor) => descriptor.summary.id);
+}
+
+export function useAcceptedModeSessionDescriptors(
+  conversationId: string | null,
+  pages: readonly PaginatedHistoryResult[] | undefined,
+): ModeSessionDescriptor[] {
+  const [accepted, setAccepted] = useState<{
+    conversationId: string | null;
+    descriptors: ModeSessionDescriptor[];
+  }>({ conversationId, descriptors: [] });
+  const descriptors = useMemo(
+    () =>
+      aggregateModeSessionDescriptors(
+        pages,
+        accepted.conversationId === conversationId ? accepted.descriptors : [],
+      ),
+    [accepted, conversationId, pages],
+  );
+  useEffect(() => {
+    setAccepted((current) => {
+      if (
+        current.conversationId === conversationId &&
+        current.descriptors === descriptors
+      ) {
+        return current;
+      }
+      return { conversationId, descriptors };
+    });
+  }, [conversationId, descriptors]);
+  return descriptors;
 }
 
 /** The shape `useInfiniteQuery` stores under a conversation-history key. */
@@ -212,11 +242,6 @@ export function useHistoryPagination({
   enabled,
 }: UseHistoryPaginationParams): HistoryPaginationResult {
   const queryClient = useQueryClient();
-  const [acceptedModeSessions, setAcceptedModeSessions] = useState<{
-    conversationId: string | null;
-    descriptors: ModeSessionDescriptor[];
-  }>({ conversationId, descriptors: [] });
-
   const queryKey = useMemo(
     () => conversationHistoryQueryKey(assistantId, conversationId),
     [assistantId, conversationId],
@@ -303,27 +328,10 @@ export function useHistoryPagination({
     () => aggregateBackgroundToolCompletions(query.data?.pages),
     [query.data],
   );
-  const modeSessions = useMemo(
-    () =>
-      aggregateModeSessionDescriptors(
-        query.data?.pages,
-        acceptedModeSessions.conversationId === conversationId
-          ? acceptedModeSessions.descriptors
-          : [],
-      ),
-    [acceptedModeSessions, conversationId, query.data],
+  const modeSessions = useAcceptedModeSessionDescriptors(
+    conversationId,
+    query.data?.pages,
   );
-  useEffect(() => {
-    setAcceptedModeSessions((current) => {
-      if (
-        current.conversationId === conversationId &&
-        current.descriptors === modeSessions
-      ) {
-        return current;
-      }
-      return { conversationId, descriptors: modeSessions };
-    });
-  }, [conversationId, modeSessions]);
 
   const latestPage = query.data?.pages[0];
   const oldestPage = query.data?.pages[query.data.pages.length - 1];
