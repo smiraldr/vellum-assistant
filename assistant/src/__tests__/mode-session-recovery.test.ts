@@ -16,7 +16,7 @@ import {
   recoverActiveConversationModeSessions,
   updateConversationModeSessionActivity,
 } from "../persistence/conversation-mode-sessions.js";
-import { migrateCreateConversationModeSessions } from "../persistence/migrations/379-create-conversation-mode-sessions.js";
+import { migrateCreateConversationModeSessions } from "../persistence/migrations/380-create-conversation-mode-sessions.js";
 import * as schema from "../persistence/schema.js";
 
 afterEach(() => {
