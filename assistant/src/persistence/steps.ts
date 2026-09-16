@@ -485,6 +485,10 @@ import { migrateChannelInboundMessageIdIndex } from "./migrations/374-channel-in
 import { migrateCreateChannelOutboundPosts } from "./migrations/375-create-channel-outbound-posts.js";
 import { migrateNotificationDeliveriesCanonicalMessageId } from "./migrations/376-notification-deliveries-canonical-message-id.js";
 import { migrateAddSubagentBudgetStopReason } from "./migrations/377-add-subagent-budget-stop-reason.js";
+import {
+  downCreateConversationModeSessions,
+  migrateCreateConversationModeSessions,
+} from "./migrations/378-create-conversation-mode-sessions.js";
 import type { MigrationStep } from "./migrations/run-migrations.js";
 
 export const migrationSteps: MigrationStep[] = [
@@ -1610,5 +1614,16 @@ export const migrationSteps: MigrationStep[] = [
     // must be checkpointed first or a repair flow could permanently checkpoint
     // this as a no-op.
     dependsOn: ["migrateCreateSubagentsTable"],
+  },
+  {
+    name: "migrateCreateConversationModeSessions",
+    run: migrateCreateConversationModeSessions,
+    rollback: [
+      {
+        version: 58,
+        description: "Create conversation-owned mode session lifecycle records",
+        down: downCreateConversationModeSessions,
+      },
+    ],
   },
 ];
