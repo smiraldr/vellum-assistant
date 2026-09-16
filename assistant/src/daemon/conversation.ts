@@ -117,6 +117,7 @@ import { withSqliteRetry } from "../util/sqlite-retry.js";
 import type { WorkspaceGitService } from "../workspace/git-service.js";
 import type { commitTurnChanges } from "../workspace/turn-commit.js";
 import type { AssistantAttachmentDraft } from "./assistant-attachments.js";
+import { ComputerUseModeSessionProducer } from "./computer-use-mode-session.js";
 import type { AssistantSurface } from "./conversation-agent-loop.js";
 import {
   applyCompactionResult,
@@ -140,6 +141,7 @@ import {
   persistUserMessage as persistUserMessageImpl,
   redirectToSecurePrompt as redirectToSecurePromptImpl,
 } from "./conversation-messaging.js";
+import { ConversationModeSessionCoordinator } from "./conversation-mode-session.js";
 // Extracted modules
 import { registerConversationNotifiers } from "./conversation-notifiers.js";
 import type { ProcessMessageOptions } from "./conversation-process.js";
@@ -504,6 +506,10 @@ export class Conversation {
    */
   enabledPlugins: string[] | null = null;
   /** @internal */ currentRequestId?: string;
+  /** Canonical recorded-session ownership for this conversation. */
+  readonly modeSessions: ConversationModeSessionCoordinator;
+  /** Computer-use producer mapped onto the canonical session coordinator. */
+  readonly computerUseModeSessions: ComputerUseModeSessionProducer;
   /**
    * The `clientMessageId` the running turn was started by, recorded in the same
    * synchronous step that takes the processing lock.
@@ -954,6 +960,10 @@ export class Conversation {
     const { maxTokens, speedOverride, cacheTtl, modelOverride } = options ?? {};
     const enableNativeWebSearch = options?.enableNativeWebSearch ?? false;
     this.conversationId = conversationId;
+    this.modeSessions = new ConversationModeSessionCoordinator(conversationId);
+    this.computerUseModeSessions = new ComputerUseModeSessionProducer(
+      this.modeSessions,
+    );
     this.parentConversationId = options?.parentConversationId;
     this.systemPrompt = systemPrompt;
     this.provider = provider;
@@ -2605,6 +2615,13 @@ export class Conversation {
 
   setHostCuProxy(proxy: HostCuProxy | undefined): void {
     if (this.hostCuProxy && this.hostCuProxy !== proxy) {
+      this.computerUseModeSessions.endTask({
+        turnId: this.currentRequestId,
+        source: {
+          sourceId: this.hostCuProxy.sourceId,
+          generation: this.hostCuProxy.resetGeneration,
+        },
+      });
       this.hostCuProxy.dispose();
     }
     this.hostCuProxy = proxy;

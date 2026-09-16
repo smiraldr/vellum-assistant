@@ -28,7 +28,9 @@ export function isActiveSessionGroupState(
   return state === "working" || state === "waiting" || state === "finishing";
 }
 
-function timestamp(value: number | null | undefined): number | null {
+export function normalizeSessionTimestamp(
+  value: number | null | undefined,
+): number | null {
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
     return null;
   }
@@ -52,10 +54,10 @@ export function describeSessionGroupSummary(
     };
   }
 
-  const startedAt = timestamp(input.startedAt);
-  const endedAt = timestamp(input.endedAt);
-  const lastActivityAt = timestamp(input.lastActivityAt);
-  const now = timestamp(input.now);
+  const startedAt = normalizeSessionTimestamp(input.startedAt);
+  const endedAt = normalizeSessionTimestamp(input.endedAt);
+  const lastActivityAt = normalizeSessionTimestamp(input.lastActivityAt);
+  const now = normalizeSessionTimestamp(input.now);
   const durationEnd = isActiveSessionGroupState(input.state)
     ? (now ?? lastActivityAt)
     : (endedAt ?? lastActivityAt);

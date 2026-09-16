@@ -223,6 +223,8 @@ function clientAdvertises(
 // ---------------------------------------------------------------------------
 
 export class HostCuProxy {
+  /** Stable identity for this conversation-owned proxy instance. */
+  private readonly _sourceId = uuid();
   // CU state tracking (per-conversation)
   private _stepCount = 0;
   private _maxSteps: number;
@@ -294,6 +296,14 @@ export class HostCuProxy {
     return this._actionHistory;
   }
 
+  get sourceId(): string {
+    return this._sourceId;
+  }
+
+  get resetGeneration(): number {
+    return this._resetGeneration;
+  }
+
   // ---------------------------------------------------------------------------
   // Availability
   // ---------------------------------------------------------------------------
@@ -328,6 +338,7 @@ export class HostCuProxy {
     signal?: AbortSignal,
     targetClientId?: string,
     sourceActorPrincipalId?: string,
+    onValidatedDispatch?: () => void,
   ): Promise<ToolExecutionResult> {
     if (signal?.aborted) {
       return Promise.resolve({
@@ -399,6 +410,7 @@ export class HostCuProxy {
         isError: true,
       });
     }
+    onValidatedDispatch?.();
     const scopedObservation = hasCaptureTarget(input);
     if (scopedObservation) {
       this._previousAXTree = undefined;
@@ -629,7 +641,8 @@ export class HostCuProxy {
    * stopping and puts the pointer back where the user left it, instead of
    * waiting out its idle fallback.
    */
-  endTask(conversationId: string): void {
+  endTask(conversationId: string): number {
+    const endedGeneration = this._resetGeneration;
     for (const targetClientId of this._dispatchedTargets.values()) {
       try {
         broadcastMessage(
@@ -647,10 +660,12 @@ export class HostCuProxy {
       }
     }
     this.reset();
+    return endedGeneration;
   }
 
   /** Reset all CU state. Called on terminal tools (computer_use_done, etc.). */
-  reset(): void {
+  reset(): number {
+    const endedGeneration = this._resetGeneration;
     this._dispatchedTargets.clear();
     this._stepCount = 0;
     this._previousAXTree = undefined;
@@ -658,6 +673,7 @@ export class HostCuProxy {
     this._actionHistory = [];
     this._observedTargets.clear();
     this._resetGeneration++;
+    return endedGeneration;
   }
 
   /**

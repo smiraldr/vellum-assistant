@@ -3180,6 +3180,13 @@ export async function surfaceProxyResolver(
           : typeof input.answer === "string"
             ? input.answer
             : "Task complete";
+      ctx.computerUseModeSessions.endTask({
+        turnId: ctx.currentRequestId,
+        source: {
+          sourceId: hostCuProxy.sourceId,
+          generation: hostCuProxy.resetGeneration,
+        },
+      });
       hostCuProxy.endTask(ctx.conversationId);
       return { content: summary, isError: false };
     }
@@ -3215,9 +3222,11 @@ export async function surfaceProxyResolver(
     // `maxStepsPerSession` would let a long walkthrough exhaust a budget
     // meant for actions and be told to call `computer_use_done`, which has
     // nothing to do with what it was doing.
+    const activityAt = Date.now();
     if (toolName !== POINT_AT_PROXY_TOOL) {
       hostCuProxy.recordAction(toolName, input, reasoning);
     }
+    const turnId = ctx.currentRequestId;
     return hostCuProxy.request(
       toolName,
       input,
@@ -3227,6 +3236,18 @@ export async function surfaceProxyResolver(
       signal,
       targetClientId,
       sourceActorPrincipalId,
+      toolName !== POINT_AT_PROXY_TOOL && turnId
+        ? () => {
+            ctx.computerUseModeSessions.recordAction({
+              turnId,
+              source: {
+                sourceId: hostCuProxy.sourceId,
+                generation: hostCuProxy.resetGeneration,
+              },
+              at: activityAt,
+            });
+          }
+        : undefined,
     );
   }
 

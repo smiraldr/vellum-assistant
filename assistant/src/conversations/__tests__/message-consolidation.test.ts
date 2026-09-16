@@ -3,11 +3,24 @@ import { describe, expect, test } from "bun:test";
 import type { MessageRow } from "../../persistence/conversation-crud.js";
 import { resolveMessageContentBlocks } from "../../persistence/message-content-file.js";
 import {
+  consolidateMessageRows,
   findDisplayTurnEndIndex,
   isToolResultOnlyUserMessage,
   mergeConsecutiveAssistantMessages,
   mergeToolResultsIntoAssistantMessages,
 } from "../message-consolidation.js";
+
+const sessionOwner = { mode: "browser", id: "session-123" } as const;
+
+function ownedMetadata(
+  owner: { mode: string; id: string } = sessionOwner,
+  sentAt?: number,
+): string {
+  return JSON.stringify({
+    modeSession: owner,
+    ...(sentAt !== undefined ? { sentAt } : {}),
+  });
+}
 
 function makeMsg(
   role: string,
@@ -572,5 +585,90 @@ describe("provider-error boundaries", () => {
       }),
     ];
     expect(findDisplayTurnEndIndex(rows, 0)).toBe(0);
+  });
+});
+
+describe("mode-session consolidation boundaries", () => {
+  test("does not merge marked and unmarked rows or different owners", () => {
+    const rows = [
+      makeMsg("assistant", "first", {
+        id: "owned",
+        metadata: ownedMetadata(),
+      }),
+      makeMsg("assistant", "unstamped", { id: "unstamped" }),
+      makeMsg("assistant", "different", {
+        id: "different",
+        metadata: ownedMetadata({ mode: "browser", id: "session-456" }),
+      }),
+    ];
+    expect(
+      mergeConsecutiveAssistantMessages(rows).messages.map((row) => row.id),
+    ).toEqual(["owned", "unstamped", "different"]);
+    expect(findDisplayTurnEndIndex(rows, 0)).toBe(0);
+  });
+
+  test("keeps a differently owned tool result as a display boundary", () => {
+    const assistant = makeMsg(
+      "assistant",
+      JSON.stringify([{ type: "tool_use", id: "tool-123", name: "test" }]),
+      { id: "assistant-123", metadata: ownedMetadata() },
+    );
+    const toolResult = makeMsg(
+      "user",
+      JSON.stringify([
+        { type: "tool_result", tool_use_id: "tool-123", content: "done" },
+      ]),
+      {
+        id: "result-123",
+        metadata: ownedMetadata({ mode: "browser", id: "session-456" }),
+      },
+    );
+    const merged = mergeToolResultsIntoAssistantMessages([
+      assistant,
+      toolResult,
+    ]);
+    expect(merged.map((row) => row.id)).toEqual([
+      "assistant-123",
+      "result-123",
+    ]);
+    expect(merged[1]?.content).toEqual(toolResult.content);
+    expect(findDisplayTurnEndIndex([assistant, toolResult], 0)).toBe(0);
+  });
+
+  test("preserves donor aliases and earlier and later activity bounds", () => {
+    const rows = [
+      makeMsg("assistant", "anchor", {
+        id: "assistant-anchor",
+        createdAt: 200,
+        metadata: ownedMetadata(sessionOwner, 200),
+      }),
+      makeMsg(
+        "user",
+        JSON.stringify([
+          { type: "tool_result", tool_use_id: "tool-123", content: "done" },
+        ]),
+        {
+          id: "tool-result-earlier",
+          createdAt: 150,
+          metadata: ownedMetadata(sessionOwner, 150),
+        },
+      ),
+      makeMsg("assistant", "tail", {
+        id: "assistant-tail",
+        createdAt: 250,
+        metadata: ownedMetadata(sessionOwner, 300),
+      }),
+    ];
+    const consolidated = consolidateMessageRows(rows);
+    expect(consolidated.messages.map((row) => row.id)).toEqual([
+      "assistant-anchor",
+    ]);
+    expect(consolidated.mergedIdMap.get("assistant-anchor")).toEqual([
+      "tool-result-earlier",
+      "assistant-tail",
+    ]);
+    expect(consolidated.modeSessionActivityMap.get("assistant-anchor")).toEqual(
+      { firstAt: 150, lastAt: 300 },
+    );
   });
 });

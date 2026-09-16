@@ -22,6 +22,30 @@ export const ModeSessionSchema = z.object({
 });
 export type ModeSession = z.infer<typeof ModeSessionSchema>;
 
+export function parseModeSession(value: unknown): ModeSession | undefined {
+  const parsed = ModeSessionSchema.safeParse(value);
+  return parsed.success ? parsed.data : undefined;
+}
+
+/** Historic or caller-authored invalid stamps behave like an absent stamp. */
+export const TolerantModeSessionSchema = z.preprocess(
+  parseModeSession,
+  ModeSessionSchema.optional(),
+);
+
+const MAX_DATE_MS = 8_640_000_000_000_000;
+
+export const ModeSessionActivitySchema = z
+  .object({
+    firstAt: z.number().int().nonnegative().max(MAX_DATE_MS),
+    lastAt: z.number().int().nonnegative().max(MAX_DATE_MS),
+  })
+  .refine((activity) => activity.lastAt >= activity.firstAt, {
+    message: "Mode session activity cannot end before it starts",
+    path: ["lastAt"],
+  });
+export type ModeSessionActivity = z.infer<typeof ModeSessionActivitySchema>;
+
 const ModeSessionSummaryBaseSchema = z.object({
   id: z.string().min(1),
   conversationId: z.string().min(1),
@@ -89,3 +113,28 @@ export const ModeSessionSummarySchema = z
     }
   });
 export type ModeSessionSummary = z.infer<typeof ModeSessionSummarySchema>;
+
+export const ModeSessionRuntimeStateSchema = z.enum(["waiting", "finishing"]);
+export type ModeSessionRuntimeState = z.infer<
+  typeof ModeSessionRuntimeStateSchema
+>;
+
+/** Durable lifecycle truth plus optional process-local presentation state. */
+export const ModeSessionDescriptorSchema = z
+  .object({
+    summary: ModeSessionSummarySchema,
+    runtimeState: ModeSessionRuntimeStateSchema.optional(),
+  })
+  .superRefine((descriptor, ctx) => {
+    if (
+      descriptor.runtimeState !== undefined &&
+      descriptor.summary.status !== "active"
+    ) {
+      ctx.addIssue({
+        code: "custom",
+        message: "Only active mode sessions can expose runtime state",
+        path: ["runtimeState"],
+      });
+    }
+  });
+export type ModeSessionDescriptor = z.infer<typeof ModeSessionDescriptorSchema>;

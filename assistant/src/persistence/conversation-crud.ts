@@ -26,6 +26,7 @@ import {
   forgetActivationConversation,
   forgetAllActivationConversations,
 } from "../activation/progress-store.js";
+import { TolerantModeSessionSchema } from "../api/mode-session.js";
 import type { ChannelId, InterfaceId } from "../channels/types.js";
 import { parseChannelId, parseInterfaceId } from "../channels/types.js";
 import { CHANNEL_IDS, isChannelId } from "../channels/types.js";
@@ -331,6 +332,8 @@ const backgroundToolCompletionMetadataSchema = z.object({
 
 export const messageMetadataSchema = z
   .object({
+    /** Immutable ownership of this transcript row by a recorded mode session. */
+    modeSession: TolerantModeSessionSchema,
     /**
      * Epoch ms the content actually happened, when that differs from when
      * the row was written. Set wherever persistence lags the event: a queued
