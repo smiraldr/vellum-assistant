@@ -389,6 +389,27 @@ describe("ToolResultImages referenced media", () => {
 });
 
 describe("projectToolResultImages", () => {
+  test("names wrapped computer-use images from the resolved inner tool", () => {
+    const wrapped: ChatMessageToolCall = {
+      id: "tc-wrapped",
+      name: "skill_execute",
+      input: { tool: "computer_use_click" },
+      imageDataList: ["AAAA"],
+    };
+    const malformed: ChatMessageToolCall = {
+      ...wrapped,
+      id: "tc-malformed",
+      input: { _raw: '{"tool":"computer_use_click"}' },
+    };
+
+    expect(projectToolResultImages([wrapped])[0]?.filename).toBe(
+      "computer-use-click.png",
+    );
+    expect(projectToolResultImages([malformed])[0]?.filename).toBe(
+      "skill-execute.png",
+    );
+  });
+
   test("keeps tool-call occurrence identity on inline and referenced images", () => {
     const inline: ChatMessageToolCall = {
       id: "tc-inline",

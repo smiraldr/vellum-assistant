@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, test } from "bun:test";
 
 import { collectImageManifest } from "../context/compactor.js";
 import { resolveAssistantAttachments } from "../daemon/conversation-attachments.js";
+import { settleTurnContent } from "../daemon/conversation-turn-finalize.js";
 import {
   createInlineAttachment,
   getAttachmentsForMessage,
@@ -25,12 +26,15 @@ import { getDb } from "../persistence/db-connection.js";
 import { initializeDb } from "../persistence/db-init.js";
 import { rawGet } from "../persistence/raw-query.js";
 import type { ImageContent } from "../providers/types.js";
+import { getLogger } from "../util/logger.js";
+import { recoverConversationsFromDiskViewMigration } from "../workspace/migrations/028-recover-conversations-from-disk-view.js";
 import { setConfig } from "./helpers/set-config.js";
 
 setConfig("memory", { enabled: false });
 await initializeDb();
 
 const SCREENSHOT_BASE64 = Buffer.from("screenshot").toString("base64");
+const rlog = getLogger("computer-use-screenshot-attachments-test");
 
 function resetTables(): void {
   const db = getDb();
@@ -246,5 +250,110 @@ describe("computer-use screenshot reply placement", () => {
     expect(result.emittedAttachments[0]?.computerUseScreenshot).toBeUndefined();
     expect(result.computerUseScreenshotAttachmentIds).toEqual([]);
     expect(getAttachmentsForMessage(reply.id)).toHaveLength(1);
+  });
+
+  test("exports and recovers the final screenshot reply once", async () => {
+    const conversation = createConversation();
+    const reply = await addMessage(conversation.id, "assistant", "Done.");
+    const diskDir = getConversationDirPath(
+      conversation.id,
+      conversation.createdAt,
+    );
+
+    try {
+      await settleTurnContent({
+        ctx: { conversationId: conversation.id, messages: [] },
+        state: {
+          lastAssistantMessageId: reply.id,
+          assistantMessageIdsToSync: new Set([reply.id]),
+          inflightWriters: new Map(),
+        },
+        rlog,
+      });
+
+      const diskRows = readFileSync(`${diskDir}/messages.jsonl`, "utf8")
+        .trim()
+        .split("\n");
+      expect(diskRows).toHaveLength(1);
+
+      resetTables();
+      recoverConversationsFromDiskViewMigration.run(
+        process.env.VELLUM_WORKSPACE_DIR!,
+      );
+      const recovered = rawGet<{ count: number }>(
+        "test:countRecoveredFinalScreenshotReplies",
+        "SELECT COUNT(*) AS count FROM messages WHERE conversation_id = ? AND role = 'assistant'",
+        conversation.id,
+      );
+      expect(recovered?.count).toBe(1);
+    } finally {
+      rmSync(diskDir, { recursive: true, force: true });
+    }
+  });
+
+  test("exports and recovers an earlier delivered reply and final private row once each", async () => {
+    const conversation = createConversation();
+    const deliveredReply = await addMessage(
+      conversation.id,
+      "assistant",
+      "Here is the result.",
+    );
+    const finalPrivateRow = await addMessage(
+      conversation.id,
+      "assistant",
+      "Finished delivery.",
+    );
+    const screenshot = await createInlineAttachment(
+      conversation.id,
+      conversation.createdAt,
+      "computer-use-click.png",
+      "image/png",
+      SCREENSHOT_BASE64,
+    );
+    linkAttachmentToMessage(deliveredReply.id, screenshot.id, 0);
+    const diskDir = getConversationDirPath(
+      conversation.id,
+      conversation.createdAt,
+    );
+
+    try {
+      await settleTurnContent({
+        ctx: { conversationId: conversation.id, messages: [] },
+        state: {
+          lastAssistantMessageId: finalPrivateRow.id,
+          assistantMessageIdsToSync: new Set([deliveredReply.id]),
+          inflightWriters: new Map(),
+        },
+        rlog,
+      });
+
+      const diskRows = readFileSync(`${diskDir}/messages.jsonl`, "utf8")
+        .trim()
+        .split("\n")
+        .map(
+          (line) =>
+            JSON.parse(line) as { content?: string; attachments?: string[] },
+        );
+      expect(diskRows.map((row) => row.content)).toEqual([
+        "Here is the result.",
+        "Finished delivery.",
+      ]);
+      expect(diskRows.map((row) => row.attachments?.length ?? 0)).toEqual([
+        1, 0,
+      ]);
+
+      resetTables();
+      recoverConversationsFromDiskViewMigration.run(
+        process.env.VELLUM_WORKSPACE_DIR!,
+      );
+      const recovered = rawGet<{ count: number }>(
+        "test:countRecoveredDeliveredAndPrivateRows",
+        "SELECT COUNT(*) AS count FROM messages WHERE conversation_id = ? AND role = 'assistant'",
+        conversation.id,
+      );
+      expect(recovered?.count).toBe(2);
+    } finally {
+      rmSync(diskDir, { recursive: true, force: true });
+    }
   });
 });

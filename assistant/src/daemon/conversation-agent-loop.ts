@@ -55,7 +55,6 @@ import {
   updateConversationSlackContextWatermark,
   updateMessageMetadata,
 } from "../persistence/conversation-crud.js";
-import { syncMessageToDisk } from "../persistence/conversation-disk-view.js";
 import { isReplaceableTitle } from "../persistence/conversation-title-service.js";
 import { NO_RESPONSE_MESSAGE_KIND } from "../persistence/conversation-types.js";
 import {
@@ -1977,14 +1976,7 @@ export async function runAgentLoopImpl(
         attachmentTargetMessageId &&
         attachmentResult.computerUseScreenshotAttachmentIds.length > 0
       ) {
-        const conversation = getConversation(ctx.conversationId);
-        if (conversation) {
-          syncMessageToDisk(
-            ctx.conversationId,
-            attachmentTargetMessageId,
-            conversation.createdAt,
-          );
-        }
+        state.assistantMessageIdsToSync.add(attachmentTargetMessageId);
       }
 
       ctx.lastAssistantAttachments = assistantAttachments;

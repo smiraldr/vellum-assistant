@@ -1,6 +1,7 @@
 import { Loader2 } from "lucide-react";
 import type { FC, MouseEvent } from "react";
 import { useCallback, useMemo } from "react";
+import { resolveComputerUseToolName } from "@vellumai/assistant-api";
 
 import { AttachmentDownloadOverlay } from "@/domains/chat/components/chat-attachments/attachment-download-overlay";
 import { AttachmentPreviewBox } from "@/domains/chat/components/chat-attachments/attachment-preview-box";
@@ -218,10 +219,12 @@ export function projectToolResultImages(
   for (const tc of toolCalls) {
     const { refIds, base64Images } = toolResultImageInputs(tc);
     const total = refIds.length + base64Images.length;
-    const prefix = toolNameToFilePrefix(tc.name);
+    const producingToolName =
+      resolveComputerUseToolName(tc.name, tc.input) ?? tc.name;
+    const prefix = toolNameToFilePrefix(producingToolName);
     let localIndex = 0;
     const nameFor = (ext: string): string => {
-      const base = tc.name ? prefix : `image-${globalIndex}`;
+      const base = producingToolName ? prefix : `image-${globalIndex}`;
       const suffix = total > 1 ? `-${localIndex}` : "";
       return `${base}${suffix}.${ext}`;
     };
