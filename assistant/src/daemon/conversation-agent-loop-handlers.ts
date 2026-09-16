@@ -2278,6 +2278,9 @@ export async function finalizePendingToolResultRow(
         )
       : blocks;
   for (const block of referencedBlocks) {
+    // guard:allow-tool-result-only: locally-executed tool results carry rich
+    // contentBlocks and pending computer-use state; provider web-search
+    // results carry opaque content and never enter the local pending-tool map.
     if (block.type !== "tool_result") {
       continue;
     }

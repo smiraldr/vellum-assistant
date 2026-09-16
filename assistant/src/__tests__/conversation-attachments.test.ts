@@ -56,6 +56,38 @@ function makeBase64(bytes: number): string {
   return buf.toString("base64");
 }
 
+function estimateBase64Bytes(
+  value: string | { data?: unknown; sizeBytes?: unknown } | null | undefined,
+): number {
+  if (value == null) {
+    return 0;
+  }
+  if (typeof value !== "string") {
+    if (typeof value.sizeBytes === "number") {
+      return value.sizeBytes;
+    }
+    return typeof value.data === "string" ? estimateBase64Bytes(value.data) : 0;
+  }
+  const trimmed = value.replace(/\s/g, "");
+  const padding = trimmed.endsWith("==") ? 2 : trimmed.endsWith("=") ? 1 : 0;
+  return Math.max(0, Math.floor((trimmed.length * 3) / 4) - padding);
+}
+
+function toolImageFilename(
+  mediaType: string,
+  toolName?: string,
+  title?: string,
+): string {
+  const prefix =
+    title ||
+    toolName
+      ?.replace(/([a-z])([A-Z])/g, "$1-$2")
+      .replace(/_/g, "-")
+      .toLowerCase() ||
+    "tool-output";
+  return `${prefix}.${mediaType.split("/")[1] ?? "png"}`;
+}
+
 // ---------------------------------------------------------------------------
 // resolveAssistantAttachments — all attachments are now file-backed
 // ---------------------------------------------------------------------------
@@ -92,6 +124,8 @@ describe("resolveAssistantAttachments", () => {
         accepted: d,
         warnings: [],
       }),
+      estimateBase64Bytes,
+      toolImageFilename,
     }));
 
     // Re-import to pick up mocks
@@ -152,6 +186,8 @@ describe("resolveAssistantAttachments", () => {
         accepted: d,
         warnings: [],
       }),
+      estimateBase64Bytes,
+      toolImageFilename,
     }));
 
     const { resolveAssistantAttachments: resolve } =
@@ -234,6 +270,8 @@ describe("resolveAssistantAttachments", () => {
         accepted: d.filter((draft) => draft.filename !== "huge.bin"),
         warnings: ['Skipped attachment "huge.bin": too large.'],
       }),
+      estimateBase64Bytes,
+      toolImageFilename,
     }));
 
     const { resolveAssistantAttachments: resolve } =
@@ -303,6 +341,8 @@ describe("resolveAssistantAttachments", () => {
         accepted: d,
         warnings: [],
       }),
+      estimateBase64Bytes,
+      toolImageFilename,
     }));
 
     const { resolveAssistantAttachments: resolve } =
