@@ -29,9 +29,10 @@ export function isActiveSessionGroupState(
 }
 
 function timestamp(value: number | null | undefined): number | null {
-  return typeof value === "number" && Number.isFinite(value) && value >= 0
-    ? value
-    : null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    return null;
+  }
+  return Number.isFinite(new Date(value).getTime()) ? value : null;
 }
 
 /**

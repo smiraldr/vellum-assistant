@@ -5,6 +5,8 @@ import {
   describeSessionGroupSummary,
 } from "./session-group-summary";
 
+const MAX_DATE_TIMESTAMP = 8_640_000_000_000_000;
+
 describe("describeSessionGroupSummary", () => {
   test.each(["working", "waiting", "finishing"] as const)(
     "uses injected time for the %s runtime state",
@@ -94,6 +96,48 @@ describe("describeSessionGroupSummary", () => {
       }),
     ).toEqual({
       state: "unavailable",
+      durationSeconds: null,
+      lastActivityAt: null,
+      endedAt: null,
+    });
+  });
+
+  test("accepts the maximum JavaScript Date timestamp", () => {
+    expect(
+      describeSessionGroupSummary({
+        state: "completed",
+        startedAt: MAX_DATE_TIMESTAMP - 1_000,
+        endedAt: MAX_DATE_TIMESTAMP,
+      }),
+    ).toEqual({
+      state: "completed",
+      durationSeconds: 1,
+      lastActivityAt: null,
+      endedAt: MAX_DATE_TIMESTAMP,
+    });
+  });
+
+  test("rejects timestamps outside the JavaScript Date range", () => {
+    expect(
+      describeSessionGroupSummary({
+        state: "completed",
+        startedAt: 10_000,
+        endedAt: MAX_DATE_TIMESTAMP + 1,
+      }),
+    ).toEqual({
+      state: "completed",
+      durationSeconds: null,
+      lastActivityAt: null,
+      endedAt: null,
+    });
+    expect(
+      describeSessionGroupSummary({
+        state: "interrupted",
+        startedAt: 10_000,
+        lastActivityAt: MAX_DATE_TIMESTAMP + 1,
+      }),
+    ).toEqual({
+      state: "interrupted",
       durationSeconds: null,
       lastActivityAt: null,
       endedAt: null,

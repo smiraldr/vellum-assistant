@@ -18,6 +18,7 @@ import {
 
 const STARTED_AT = Date.UTC(2026, 8, 15, 14, 0);
 const ENDED_AT = STARTED_AT + 125_000;
+const OUT_OF_RANGE_TIMESTAMP = 8_640_000_000_000_001;
 
 const COMPLETED_SUMMARY: SessionGroupRowProps["summary"] = {
   state: "completed",
@@ -134,6 +135,38 @@ describe("SessionGroupRow", () => {
     expect(summaryText).not.toContain("Ended");
     expect(queryByTestId("session-group-live-indicator")).toBeNull();
   });
+
+  test.each([
+    [
+      "completed end",
+      {
+        state: "completed",
+        startedAt: STARTED_AT,
+        endedAt: OUT_OF_RANGE_TIMESTAMP,
+      },
+      "Timing unavailable",
+    ],
+    [
+      "interrupted activity",
+      {
+        state: "interrupted",
+        startedAt: STARTED_AT,
+        lastActivityAt: OUT_OF_RANGE_TIMESTAMP,
+      },
+      "Interrupted",
+    ],
+  ] as const)(
+    "degrades an out-of-range %s timestamp",
+    (_name, summary, fallback) => {
+      const { getByRole } = render(
+        <ControlledRow mode="ambient" summary={summary}>
+          <div>Cached child</div>
+        </ControlledRow>,
+      );
+
+      expect(getByRole("button").textContent).toContain(fallback);
+    },
+  );
 
   test("mounts only the latest children after closed header updates", () => {
     const onRender = mock((_label: string) => {});
