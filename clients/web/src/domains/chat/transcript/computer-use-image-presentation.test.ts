@@ -184,7 +184,7 @@ describe("deriveTranscriptImagePresentation", () => {
     );
 
     expect(imagesFor(presentation, "cu")[0]?.filename).toBe(
-      "skill-execute.png",
+      "computer-use-click.png",
     );
     expect(imagesFor(presentation, "ordinary-unnamed")[0]?.filename).toBe(
       "image-2.png",

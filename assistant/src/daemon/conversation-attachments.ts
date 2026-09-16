@@ -94,6 +94,8 @@ export interface AttachmentResolutionResult {
   emittedAttachments: UserMessageAttachment[];
   directiveWarnings: string[];
   persistedFiles: PersistedAttachmentFile[];
+  /** Attachment ids successfully linked to the target assistant row. */
+  linkedAttachmentIds: string[];
   computerUseScreenshotAttachmentIds: string[];
 }
 
@@ -124,6 +126,7 @@ export async function resolveAssistantAttachments(
   let assistantAttachments: ResolvedAttachmentDraft[] = [];
   const emittedAttachments: UserMessageAttachment[] = [];
   const persistedFiles: PersistedAttachmentFile[] = [];
+  const linkedAttachmentIds: string[] = [];
   const computerUseScreenshotAttachmentIds: string[] = [];
 
   const recordPersistedFile = (draft: AssistantAttachmentDraft): void => {
@@ -306,6 +309,7 @@ export async function resolveAssistantAttachments(
       }
 
       recordPersistedFile(draft);
+      linkedAttachmentIds.push(stored.id);
       emittedAttachments.push({
         id: stored.id,
         filename: draft.filename,
@@ -346,6 +350,7 @@ export async function resolveAssistantAttachments(
     emittedAttachments,
     directiveWarnings,
     persistedFiles,
+    linkedAttachmentIds,
     computerUseScreenshotAttachmentIds,
   };
 }

@@ -122,6 +122,8 @@ describe("computer-use screenshot reply placement", () => {
         computerUseScreenshot: true,
       }),
     ]);
+    expect(first.linkedAttachmentIds).toEqual([final.id]);
+    expect(retry.linkedAttachmentIds).toEqual([final.id]);
     expect(
       computerUseScreenshotAttachmentIdsFromMetadata(
         parseMessageMetadata(getMessageById(reply.id)?.metadata ?? null),
@@ -212,6 +214,7 @@ describe("computer-use screenshot reply placement", () => {
       expect(
         result.emittedAttachments[0]?.computerUseScreenshot,
       ).toBeUndefined();
+      expect(result.linkedAttachmentIds).toEqual([replyAttachments[0]!.id]);
       expect(
         computerUseScreenshotAttachmentIdsFromMetadata(
           parseMessageMetadata(getMessageById(reply.id)?.metadata ?? null),
@@ -249,7 +252,56 @@ describe("computer-use screenshot reply placement", () => {
     expect(result.emittedAttachments).toHaveLength(1);
     expect(result.emittedAttachments[0]?.computerUseScreenshot).toBeUndefined();
     expect(result.computerUseScreenshotAttachmentIds).toEqual([]);
+    expect(result.linkedAttachmentIds).toEqual([
+      result.emittedAttachments[0]!.id!,
+    ]);
     expect(getAttachmentsForMessage(reply.id)).toHaveLength(1);
+  });
+
+  test("reports an ordinary tool attachment only after linking it", async () => {
+    const conversation = createConversation();
+    const reply = await addMessage(conversation.id, "assistant", "Done.");
+    const result = await resolveAssistantAttachments(
+      [],
+      [
+        {
+          type: "image",
+          source: {
+            type: "base64",
+            media_type: "image/png",
+            data: SCREENSHOT_BASE64,
+          },
+        },
+      ],
+      [],
+      tmpdir(),
+      async () => true,
+      reply.id,
+      new Map([[0, "browser_screenshot"]]),
+    );
+
+    expect(result.computerUseScreenshotAttachmentIds).toEqual([]);
+    expect(result.linkedAttachmentIds).toEqual([
+      result.emittedAttachments[0]!.id!,
+    ]);
+    expect(getAttachmentsForMessage(reply.id)).toHaveLength(1);
+  });
+
+  test("reports no linked attachments when resolution has no drafts", async () => {
+    const conversation = createConversation();
+    const reply = await addMessage(conversation.id, "assistant", "Done.");
+    const result = await resolveAssistantAttachments(
+      [],
+      [],
+      [],
+      tmpdir(),
+      async () => true,
+      reply.id,
+    );
+
+    expect(result.assistantAttachments).toEqual([]);
+    expect(result.linkedAttachmentIds).toEqual([]);
+    expect(getAttachmentsForMessage(reply.id)).toEqual([]);
   });
 
   test("exports and recovers the final screenshot reply once", async () => {

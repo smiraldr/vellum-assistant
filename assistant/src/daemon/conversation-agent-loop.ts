@@ -1974,7 +1974,7 @@ export async function runAgentLoopImpl(
       persistedAttachmentFiles = attachmentResult.persistedFiles;
       if (
         attachmentTargetMessageId &&
-        attachmentResult.computerUseScreenshotAttachmentIds.length > 0
+        attachmentResult.linkedAttachmentIds.length > 0
       ) {
         state.assistantMessageIdsToSync.add(attachmentTargetMessageId);
       }

@@ -609,6 +609,7 @@ const resolveAssistantAttachmentsMock = mock(
     emittedAttachments: [],
     directiveWarnings: [],
     persistedFiles: [],
+    linkedAttachmentIds: [],
     computerUseScreenshotAttachmentIds: [],
   }),
 );
@@ -920,6 +921,26 @@ function makeCtx(
   return ctx;
 }
 
+function makeSendUserMessageCtx(): Conversation {
+  return makeCtx({
+    currentCallSite: "mainAgent",
+    providerResponses: [
+      toolUseResponse("tu_1", "send_user_message", {
+        message: "Here is the result.",
+      }),
+      textResponse("Finished delivery."),
+    ],
+    loopTools: [
+      {
+        name: "send_user_message",
+        description: "deliver",
+        input_schema: { type: "object" },
+      },
+    ],
+    toolExecutor: async () => ({ content: "Delivered.", isError: false }),
+  });
+}
+
 /**
  * What `classifyConversationError` returns for a daily-credit-limit 402 (see
  * `dailyLimitClassification` in conversation-error.ts). Its `userMessage` is
@@ -1066,6 +1087,7 @@ beforeEach(() => {
     emittedAttachments: [],
     directiveWarnings: [],
     persistedFiles: [],
+    linkedAttachmentIds: [],
     computerUseScreenshotAttachmentIds: [],
   }));
   mockMessageById = null;
@@ -1743,6 +1765,7 @@ describe("session-agent-loop", () => {
         ],
         directiveWarnings: [],
         persistedFiles: [],
+        linkedAttachmentIds: ["screenshot-1"],
         computerUseScreenshotAttachmentIds: ["screenshot-1"],
       }));
       const events: AssistantEvent[] = [];
@@ -1765,7 +1788,7 @@ describe("session-agent-loop", () => {
       expect(finalRowSyncs).toHaveLength(1);
     });
 
-    test("defers an earlier delivered screenshot reply to ordered turn settlement", async () => {
+    test("defers an earlier delivered attachment reply to ordered turn settlement", async () => {
       const featureFlags = await import("../config/assistant-feature-flags.js");
       const flagSpy = spyOn(
         featureFlags,
@@ -1781,26 +1804,11 @@ describe("session-agent-loop", () => {
         emittedAttachments: [],
         directiveWarnings: [],
         persistedFiles: [],
-        computerUseScreenshotAttachmentIds: ["screenshot-1"],
+        linkedAttachmentIds: ["attachment-1"],
+        computerUseScreenshotAttachmentIds: [],
       }));
       const assistantSyncsAtTerminal: string[][] = [];
-      const ctx = makeCtx({
-        currentCallSite: "mainAgent",
-        providerResponses: [
-          toolUseResponse("tu_1", "send_user_message", {
-            message: "Here is the result.",
-          }),
-          textResponse("Finished delivery."),
-        ],
-        loopTools: [
-          {
-            name: "send_user_message",
-            description: "deliver",
-            input_schema: { type: "object" },
-          },
-        ],
-        toolExecutor: async () => ({ content: "Delivered.", isError: false }),
-      });
+      const ctx = makeSendUserMessageCtx();
 
       try {
         await runAgentLoopImpl(ctx, "click it", "msg-1", (event) => {
@@ -1838,6 +1846,41 @@ describe("session-agent-loop", () => {
             ["msg-delivered-reply", "msg-final-private"].includes(id),
           ),
       ).toEqual(["msg-delivered-reply", "msg-final-private"]);
+    });
+
+    test("does not queue an earlier delivered reply without a linked attachment", async () => {
+      const featureFlags = await import("../config/assistant-feature-flags.js");
+      const flagSpy = spyOn(
+        featureFlags,
+        "isAssistantFeatureFlagEnabled",
+      ).mockImplementation((key: string) => key === "send-user-message");
+      reserveMessageMock
+        .mockImplementationOnce(async () => ({ id: "msg-delivered-empty" }))
+        .mockImplementationOnce(async () => ({ id: "msg-tool-result-empty" }))
+        .mockImplementationOnce(async () => ({ id: "msg-final-empty" }));
+      mockTurnReplyMessageId = "msg-delivered-empty";
+
+      try {
+        await runAgentLoopImpl(
+          makeSendUserMessageCtx(),
+          "click it",
+          "msg-1",
+          () => {},
+        );
+      } finally {
+        flagSpy.mockRestore();
+      }
+
+      const calls = syncMessageToDiskMock.mock.calls as unknown as Array<
+        [string, string, number]
+      >;
+      expect(
+        calls
+          .map((call) => call[1])
+          .filter((id) =>
+            ["msg-delivered-empty", "msg-final-empty"].includes(id),
+          ),
+      ).toEqual(["msg-final-empty"]);
     });
   });
 
@@ -2328,6 +2371,7 @@ describe("session-agent-loop", () => {
         ],
         directiveWarnings: [],
         persistedFiles: [],
+        linkedAttachmentIds: ["screenshot-1"],
         computerUseScreenshotAttachmentIds: ["screenshot-1"],
       }));
       const events: AssistantEvent[] = [];
