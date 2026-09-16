@@ -65,6 +65,7 @@ function makeDeps(): EventHandlerDeps {
       emitActivityState: () => {},
       markWorkspaceTopLevelDirty: () => {},
       currentTurnSurfaces: [],
+      modeSessions: { getTurnOwner: () => undefined },
     } as unknown as EventHandlerDeps["ctx"],
     onEvent: () => {},
     reqId: "test-req",

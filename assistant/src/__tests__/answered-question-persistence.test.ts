@@ -60,6 +60,7 @@ function makeDeps(): EventHandlerDeps {
       emitActivityState: () => {},
       markWorkspaceTopLevelDirty: () => {},
       currentTurnSurfaces: [],
+      modeSessions: { getTurnOwner: () => undefined },
     } as unknown as EventHandlerDeps["ctx"],
     onEvent: (event: unknown) => {
       emitted.push(event as Record<string, unknown>);
