@@ -1,4 +1,4 @@
-import type { ModeSessionMode } from "../api/mode-session.js";
+import type { ModeSession, ModeSessionMode } from "../api/mode-session.js";
 import type {
   ConversationModeSessionCoordinator,
   ModeSessionSourceHandle,
@@ -83,13 +83,24 @@ export class CameraModeSessionProducer {
     }
 
     const syntheticTurnId = `${this.#sourceId}:${epoch}:${handle.activation}`;
-    const owner = this.#coordinator.claimTurn(syntheticTurnId, handle, at);
+    let owner: ModeSession | undefined;
+    try {
+      owner = this.#coordinator.claimTurn(syntheticTurnId, handle, at);
+    } catch (err) {
+      const rollbackError = this.#rollbackStart(handle, syntheticTurnId);
+      if (rollbackError) {
+        throw new AggregateError(
+          [err, rollbackError],
+          "Camera session claim and rollback both failed",
+        );
+      }
+      throw err;
+    }
     if (!owner || owner.id !== handle.id) {
-      this.#coordinator.retireSource(handle, {
-        status: "interrupted",
-        endReason: "camera_start_refused",
-      });
-      this.#coordinator.releaseTurn(syntheticTurnId);
+      const rollbackError = this.#rollbackStart(handle, syntheticTurnId);
+      if (rollbackError) {
+        throw rollbackError;
+      }
       return undefined;
     }
 
@@ -105,6 +116,27 @@ export class CameraModeSessionProducer {
     this.#highestEpoch = epoch;
     this.#activeRun = run;
     return handle;
+  }
+
+  #rollbackStart(
+    handle: ModeSessionSourceHandle,
+    syntheticTurnId: string,
+  ): unknown {
+    let rollbackError: unknown;
+    try {
+      this.#coordinator.retireSource(handle, {
+        status: "interrupted",
+        endReason: "camera_start_refused",
+      });
+    } catch (err) {
+      rollbackError = err;
+    }
+    try {
+      this.#coordinator.releaseTurn(syntheticTurnId);
+    } catch (err) {
+      rollbackError ??= err;
+    }
+    return rollbackError;
   }
 
   captureTurn(): ModeSessionSourceHandle | undefined {
@@ -202,18 +234,39 @@ export class CameraModeSessionProducer {
     run: CameraRun,
     disposition: ModeSessionTerminalDisposition,
   ): boolean {
-    if (
-      run.retired ||
-      !this.#coordinator.retireSource(run.handle, disposition)
-    ) {
+    if (run.retired) {
       return false;
+    }
+    let retired = false;
+    let retirementError: unknown;
+    try {
+      retired = this.#coordinator.retireSource(run.handle, disposition);
+    } catch (err) {
+      retirementError = err;
     }
     run.retired = true;
     if (this.#activeRun === run) {
       this.#activeRun = undefined;
     }
-    this.#releaseIfSettled(run);
-    return true;
+    let releaseError: unknown;
+    try {
+      this.#releaseIfSettled(run);
+    } catch (err) {
+      releaseError = err;
+    }
+    if (retirementError && releaseError) {
+      throw new AggregateError(
+        [retirementError, releaseError],
+        "Camera session retirement and turn release both failed",
+      );
+    }
+    if (retirementError) {
+      throw retirementError;
+    }
+    if (releaseError) {
+      throw releaseError;
+    }
+    return retired;
   }
 
   #releaseIfSettled(run: CameraRun): void {

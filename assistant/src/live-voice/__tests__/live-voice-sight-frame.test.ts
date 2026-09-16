@@ -684,6 +684,130 @@ describe("live-voice camera frames kept mid-call", () => {
     }
   });
 
+  test("dispatches voice ungrouped when the first delivery claim throws", async () => {
+    const harness = createSessionHarness("Sight voice first claim failure");
+    const coordinator = harness.activeConversation.modeSessions;
+    const originalClaimTurn = coordinator.claimTurn.bind(coordinator);
+    let attemptedRequestId: string | undefined;
+    const claimTurn = spyOn(coordinator, "claimTurn").mockImplementation(
+      (turnId, source, at) => {
+        const owner = originalClaimTurn(turnId, source, at);
+        if (!turnId.startsWith("live-voice-camera:")) {
+          attemptedRequestId = turnId;
+          throw new Error("session tracking unavailable");
+        }
+        return owner;
+      },
+    );
+    try {
+      await harness.session.start();
+      await harness.session.handleClientFrame({
+        type: "sight_start",
+        cameraEpoch: 54,
+        source: "live",
+      });
+      await harness.session.handleClientFrame({
+        type: "text",
+        text: "What is here?",
+      });
+      await waitFor(() => harness.startVoiceTurn.mock.calls.length === 1);
+
+      expect(
+        harness.startVoiceTurn.mock.calls[0]![0].preacceptedModeSession,
+      ).toBeUndefined();
+      expect(attemptedRequestId).toBeDefined();
+      expect(coordinator.getTurnOwner(attemptedRequestId!)).toBeUndefined();
+    } finally {
+      claimTurn.mockRestore();
+      await harness.session.close("client_end");
+      harness.dispose();
+    }
+  });
+
+  test("releases a mismatched first delivery claim before ungrouped dispatch", async () => {
+    const harness = createSessionHarness("Sight voice first claim mismatch");
+    const coordinator = harness.activeConversation.modeSessions;
+    const originalClaimTurn = coordinator.claimTurn.bind(coordinator);
+    let attemptedRequestId: string | undefined;
+    const claimTurn = spyOn(coordinator, "claimTurn").mockImplementation(
+      (turnId, source, at) => {
+        const owner = originalClaimTurn(turnId, source, at);
+        if (!turnId.startsWith("live-voice-camera:") && owner) {
+          attemptedRequestId = turnId;
+          return { id: "different-session", mode: owner.mode };
+        }
+        return owner;
+      },
+    );
+    try {
+      await harness.session.start();
+      await harness.session.handleClientFrame({
+        type: "sight_start",
+        cameraEpoch: 57,
+        source: "ambient",
+      });
+      await harness.session.handleClientFrame({
+        type: "text",
+        text: "What is here?",
+      });
+      await waitFor(() => harness.startVoiceTurn.mock.calls.length === 1);
+
+      expect(
+        harness.startVoiceTurn.mock.calls[0]![0].preacceptedModeSession,
+      ).toBeUndefined();
+      expect(attemptedRequestId).toBeDefined();
+      expect(coordinator.getTurnOwner(attemptedRequestId!)).toBeUndefined();
+    } finally {
+      claimTurn.mockRestore();
+      await harness.session.close("client_end");
+      harness.dispose();
+    }
+  });
+
+  test("releases every delivery claim when a later admission throws", async () => {
+    const harness = createSessionHarness("Sight voice later claim failure");
+    const coordinator = harness.activeConversation.modeSessions;
+    const originalClaimTurn = coordinator.claimTurn.bind(coordinator);
+    const attemptedRequestIds: string[] = [];
+    const claimTurn = spyOn(coordinator, "claimTurn").mockImplementation(
+      (turnId, source, at) => {
+        const owner = originalClaimTurn(turnId, source, at);
+        if (!turnId.startsWith("live-voice-camera:")) {
+          attemptedRequestIds.push(turnId);
+          if (attemptedRequestIds.length === 3) {
+            throw new Error("session tracking unavailable");
+          }
+        }
+        return owner;
+      },
+    );
+    try {
+      await harness.session.start();
+      await harness.session.handleClientFrame({
+        type: "sight_start",
+        cameraEpoch: 55,
+        source: "ambient",
+      });
+      await harness.session.handleClientFrame({
+        type: "text",
+        text: "What is here?",
+      });
+      await waitFor(() => harness.startVoiceTurn.mock.calls.length === 1);
+
+      expect(attemptedRequestIds).toHaveLength(3);
+      expect(
+        harness.startVoiceTurn.mock.calls[0]![0].preacceptedModeSession,
+      ).toBeUndefined();
+      expect(
+        attemptedRequestIds.map((id) => coordinator.getTurnOwner(id)),
+      ).toEqual([undefined, undefined, undefined]);
+    } finally {
+      claimTurn.mockRestore();
+      await harness.session.close("client_end");
+      harness.dispose();
+    }
+  });
+
   test("keeps a stopped camera session active until voice delivery settles", async () => {
     const harness = createSessionHarness("Sight voice delivery barrier");
     try {
@@ -727,6 +851,72 @@ describe("live-voice camera frames kept mid-call", () => {
         true,
       );
     } finally {
+      await harness.session.close("client_end");
+      harness.dispose();
+    }
+  });
+
+  test("releases remaining delivery claims when one release throws", async () => {
+    const harness = createSessionHarness("Sight voice release failure");
+    const coordinator = harness.activeConversation.modeSessions;
+    const originalClaimTurn = coordinator.claimTurn.bind(coordinator);
+    const claimedRequestIds: string[] = [];
+    const claimTurn = spyOn(coordinator, "claimTurn").mockImplementation(
+      (turnId, source, at) => {
+        const owner = originalClaimTurn(turnId, source, at);
+        if (!turnId.startsWith("live-voice-camera:")) {
+          claimedRequestIds.push(turnId);
+        }
+        return owner;
+      },
+    );
+    const originalReleaseTurn = coordinator.releaseTurn.bind(coordinator);
+    const releasedRequestIds: string[] = [];
+    let injectedFailure = false;
+    const releaseTurn = spyOn(coordinator, "releaseTurn").mockImplementation(
+      (turnId) => {
+        const released = originalReleaseTurn(turnId);
+        if (!turnId.startsWith("live-voice-camera:")) {
+          releasedRequestIds.push(turnId);
+          if (!injectedFailure) {
+            injectedFailure = true;
+            throw new Error("session tracking unavailable");
+          }
+        }
+        return released;
+      },
+    );
+    try {
+      await harness.session.start();
+      await harness.session.handleClientFrame({
+        type: "sight_start",
+        cameraEpoch: 56,
+        source: "live",
+      });
+      await harness.session.handleClientFrame({
+        type: "text",
+        text: "Describe this.",
+      });
+      await waitFor(() => harness.startVoiceTurn.mock.calls.length === 1);
+      const options = harness.startVoiceTurn.mock.calls[0]![0];
+
+      options.callbacks?.message_complete?.({
+        type: "message_complete",
+        conversationId: harness.conversationId,
+        messageId: "assistant-message-release-failure",
+      });
+      await waitFor(() =>
+        harness.frames.some((frame) => frame.type === "tts_done"),
+      );
+
+      expect(claimedRequestIds).toHaveLength(3);
+      expect(releasedRequestIds).toContain(claimedRequestIds[1]!);
+      expect(releasedRequestIds).toContain(claimedRequestIds[2]!);
+      expect(coordinator.getTurnOwner(claimedRequestIds[1]!)).toBeUndefined();
+      expect(coordinator.getTurnOwner(claimedRequestIds[2]!)).toBeUndefined();
+    } finally {
+      releaseTurn.mockRestore();
+      claimTurn.mockRestore();
       await harness.session.close("client_end");
       harness.dispose();
     }

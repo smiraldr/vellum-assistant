@@ -821,6 +821,19 @@ interface ActiveAssistantTurn {
   assistantAudioSampleRate?: number;
 }
 
+function sameModeSessionSource(
+  a: ModeSessionSourceHandle | undefined,
+  b: ModeSessionSourceHandle,
+): boolean {
+  return (
+    a?.id === b.id &&
+    a.mode === b.mode &&
+    a.sourceId === b.sourceId &&
+    a.generation === b.generation &&
+    a.activation === b.activation
+  );
+}
+
 // Base control prompt for every live-voice turn. Opens with the spoken-reply
 // rules shared with the phone path (spoken-reply-rules.ts): this is the only
 // place the model learns that its text is spoken, since the system prompt has
@@ -5861,20 +5874,45 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
     const turnId = this.ensureTurnId(utterance);
     const initialLeg = opts?.initialLeg ?? "front-door";
     const modeSessionRequestId = randomUUID();
-    const modeSessionSource =
-      this.cameraModeSessions?.holdDelivery(modeSessionRequestId);
-    const modeSessionRequestIds = modeSessionSource
-      ? [modeSessionRequestId]
-      : [];
-    if (modeSessionSource && initialLeg === "front-door") {
-      const escalatedRequestId = randomUUID();
-      if (this.cameraModeSessions?.holdDelivery(escalatedRequestId)) {
-        modeSessionRequestIds.push(escalatedRequestId);
+    const attemptedModeSessionRequestIds: string[] = [modeSessionRequestId];
+    let modeSessionSource: ModeSessionSourceHandle | undefined;
+    let modeSessionRequestIds: string[] = [];
+    let modeSessionDeliveryTurnId: string | null = null;
+    try {
+      modeSessionSource =
+        this.cameraModeSessions?.holdDelivery(modeSessionRequestId);
+      if (!modeSessionSource) {
+        this.releaseModeSessionTurnId(modeSessionRequestId);
+      } else {
+        modeSessionRequestIds.push(modeSessionRequestId);
+        if (initialLeg === "front-door") {
+          const escalatedRequestId = randomUUID();
+          attemptedModeSessionRequestIds.push(escalatedRequestId);
+          const escalatedSource =
+            this.cameraModeSessions?.holdDelivery(escalatedRequestId);
+          if (!sameModeSessionSource(escalatedSource, modeSessionSource)) {
+            throw new Error("Camera session changed during voice admission");
+          }
+          modeSessionRequestIds.push(escalatedRequestId);
+        }
+        const deliveryTurnId = `live-voice-delivery:${this.context.sessionId}:${++this.modeSessionDeliveryCounter}`;
+        attemptedModeSessionRequestIds.push(deliveryTurnId);
+        const deliverySource =
+          this.cameraModeSessions?.holdDelivery(deliveryTurnId);
+        if (!sameModeSessionSource(deliverySource, modeSessionSource)) {
+          throw new Error("Camera session changed during voice admission");
+        }
+        modeSessionDeliveryTurnId = deliveryTurnId;
       }
-    }
-    const modeSessionDeliveryTurnId = `live-voice-delivery:${this.context.sessionId}:${++this.modeSessionDeliveryCounter}`;
-    if (modeSessionSource) {
-      this.cameraModeSessions?.holdDelivery(modeSessionDeliveryTurnId);
+    } catch (err) {
+      log.warn(
+        { err, turnId },
+        "Could not attach camera session ownership to voice turn",
+      );
+      this.releaseModeSessionTurnIds(attemptedModeSessionRequestIds);
+      modeSessionSource = undefined;
+      modeSessionRequestIds = [];
+      modeSessionDeliveryTurnId = null;
     }
     this.startMetricsTurnIfNeeded(utterance, turnId);
     this.markAssistantDispatch(utterance, turnId);
@@ -6567,7 +6605,7 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       return true;
     } catch (err) {
       if (modeSessionRequestId) {
-        this.cameraModeSessions?.releaseDelivery(modeSessionRequestId);
+        this.releaseModeSessionTurnId(modeSessionRequestId);
       }
       if (!this.isActiveAssistantTurn(token)) {
         return false;
@@ -7442,12 +7480,27 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       return;
     }
     turn.modeSessionDeliveryTurnId = null;
-    this.cameraModeSessions?.releaseDelivery(turnId);
+    this.releaseModeSessionTurnId(turnId);
   }
 
   private releaseModeSessionRequests(turn: ActiveAssistantTurn): void {
-    for (const turnId of turn.modeSessionRequestIds.splice(0)) {
+    this.releaseModeSessionTurnIds(turn.modeSessionRequestIds.splice(0));
+  }
+
+  private releaseModeSessionTurnIds(turnIds: readonly string[]): void {
+    for (const turnId of turnIds) {
+      this.releaseModeSessionTurnId(turnId);
+    }
+  }
+
+  private releaseModeSessionTurnId(turnId: string): void {
+    try {
       this.cameraModeSessions?.releaseDelivery(turnId);
+    } catch (err) {
+      log.warn(
+        { err, turnId },
+        "Could not release camera session ownership from voice turn",
+      );
     }
   }
 
