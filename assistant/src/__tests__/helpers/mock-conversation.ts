@@ -29,6 +29,7 @@ export function mockUnownedModeSessions(): Conversation["modeSessions"] {
     trackPersistedRow: () => false,
     recordStructuralWait: () => false,
     invalidateStructuralWait: () => false,
+    settleStructuralWait: () => false,
     invalidateAllStructuralWaits: () => 0,
     beginDraining: () => false,
     finalizeTurn: () => false,

@@ -1179,6 +1179,31 @@ describe("session-agent-loop", () => {
       });
     });
 
+    test.each(["beginDraining", "finalizeTurn"] as const)(
+      "keeps a delivered reply successful when %s fails",
+      async (failedOperation) => {
+        const sessions = makeModeSessionDouble();
+        sessions[failedOperation].mockImplementation(() => {
+          throw new Error("session settlement unavailable");
+        });
+        const ctx = makeCtx({ modeSessions: sessions.coordinator });
+        const events: AssistantEvent[] = [];
+
+        await runAgentLoopImpl(ctx, "hello", "msg-1", (event) =>
+          events.push(event),
+        );
+
+        expect(
+          events.filter((event) => event.type === "message_complete"),
+        ).toHaveLength(1);
+        expect(events.some((event) => event.type === "error")).toBe(false);
+        expect(sessions.releaseTurn).toHaveBeenCalledWith("test-req", {
+          status: "completed",
+          endReason: "turn_settled",
+        });
+      },
+    );
+
     test("releases a retired source only after final output settles", async () => {
       const sessions = makeModeSessionDouble({
         terminalDisposition: {

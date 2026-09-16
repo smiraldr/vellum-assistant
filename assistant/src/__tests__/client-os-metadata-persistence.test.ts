@@ -217,7 +217,10 @@ describe("client OS surface metadata persistence", () => {
       "req-structural",
       "persisted-1",
       100,
-      { startsDisplayBoundary: false },
+      {
+        publishMessagesChanged: true,
+        startsDisplayBoundary: false,
+      },
     );
   });
 });

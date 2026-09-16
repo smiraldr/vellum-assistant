@@ -214,6 +214,23 @@ function invalidateModeSessionSurfaceWait(
   });
 }
 
+function settleModeSessionSurfaceWait(
+  ctx: Pick<Conversation, "conversationId" | "modeSessions">,
+  surfaceId: string,
+): void {
+  try {
+    ctx.modeSessions?.settleStructuralWait(
+      { kind: "surface", responseId: surfaceId },
+      { status: "completed", endReason: "surface_launch_settled" },
+    );
+  } catch (err) {
+    log.warn(
+      { err, conversationId: ctx.conversationId, surfaceId },
+      "Mode-session launcher settlement failed",
+    );
+  }
+}
+
 /**
  * Surface types that carry no terminal action: the card settles when the user
  * interacts with it, so no click could ever satisfy an attached `actions`
@@ -2119,7 +2136,6 @@ export async function handleSurfaceAction(
     // sibling button presses on the same card aren't blocked behind a stale
     // expectation that this surface still owes an answer to the LLM.
     ctx.pendingSurfaceActions.delete(surfaceId);
-    invalidateModeSessionSurfaceWait(ctx, surfaceId);
     // `ctx` is the origin Conversation — inherit its trust context so the
     // spawned conversation keeps guardian / trust-class state.
     //
@@ -2141,6 +2157,7 @@ export async function handleSurfaceAction(
       ...(anchorMessageId ? { anchorMessageId } : {}),
       ...(originTrustContext ? { originTrustContext } : {}),
     });
+    settleModeSessionSurfaceWait(ctx, surfaceId);
     log.info(
       { originConversationId: ctx.conversationId, conversationId, surfaceId },
       "launch_conversation dispatched inline from surface action",

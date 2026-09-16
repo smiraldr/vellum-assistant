@@ -471,12 +471,7 @@ export class ConversationModeSessionCoordinator {
     if (!owner || this.#retiredDispositions.has(owner.id)) {
       return false;
     }
-    for (const source of this.#sources.values()) {
-      if (source.session.id === owner.id && source.lifetime === "source") {
-        return true;
-      }
-    }
-    return false;
+    return this.#hasSourceLifetimeSource(owner.id);
   }
 
   recordActivity(turnId: string, at: number): boolean {
@@ -522,14 +517,55 @@ export class ConversationModeSessionCoordinator {
   }
 
   invalidateStructuralWait(response: ModeSessionStructuralResponse): boolean {
-    const key = associationKey(response.kind, response.responseId);
-    const association = this.#structuralAssociations.get(key);
-    if (!association || !this.#structuralAssociations.delete(key)) {
+    const association = this.#takeStructuralAssociation(response);
+    if (!association) {
       return false;
     }
-    if (!this.#hasAssociationForOwner(association.owner.id)) {
+    if (this.#hasAssociationForOwner(association.owner.id)) {
+      return true;
+    }
+    this.#clearRuntimeState(association.owner.id);
+    this.#publishRuntimeChange(association.owner.id);
+    return true;
+  }
+
+  settleStructuralWait(
+    response: ModeSessionStructuralResponse,
+    disposition: ModeSessionTerminalDisposition,
+  ): boolean {
+    const association = this.#takeStructuralAssociation(response);
+    if (!association) {
+      return false;
+    }
+    if (this.#hasAssociationForOwner(association.owner.id)) {
+      return true;
+    }
+    if (this.#hasSourceLifetimeSource(association.owner.id)) {
       this.#clearRuntimeState(association.owner.id);
       this.#publishRuntimeChange(association.owner.id);
+      return true;
+    }
+    this.#retiredDispositions.set(association.owner.id, disposition);
+    for (const turn of this.#turns.values()) {
+      if (turn.owner?.id === association.owner.id) {
+        turn.terminalDisposition = disposition;
+        turn.runtimeState = "finishing";
+      }
+    }
+    this.#retireSourcesForOwner(association.owner.id);
+    let settlementError: unknown;
+    try {
+      this.#publishRuntimeChange(association.owner.id);
+    } catch (err) {
+      settlementError = err;
+    }
+    try {
+      this.#finalizeRetiredSessionIfSettled(association.owner.id);
+    } catch (err) {
+      settlementError ??= err;
+    }
+    if (settlementError) {
+      throw settlementError;
     }
     return true;
   }
@@ -596,15 +632,57 @@ export class ConversationModeSessionCoordinator {
     return finalized;
   }
 
-  releaseTurn(turnId: string): void {
+  releaseTurn(
+    turnId: string,
+    fallbackDisposition?: ModeSessionTerminalDisposition,
+  ): void {
     const turn = this.#turns.get(turnId);
+    let repairError: unknown;
     if (turn?.owner) {
-      this.#repairTrackedRows(turn);
+      try {
+        this.#repairTrackedRows(turn);
+      } catch (err) {
+        repairError = err;
+      }
     }
     const owner = turn?.owner;
+    const shouldRetireOwner =
+      owner !== undefined &&
+      fallbackDisposition !== undefined &&
+      !this.#hasAssociationForOwner(owner.id) &&
+      !this.#hasSourceLifetimeSource(owner.id) &&
+      !this.#retiredDispositions.has(owner.id);
+    if (shouldRetireOwner) {
+      this.#retiredDispositions.set(owner.id, fallbackDisposition);
+      for (const currentTurn of this.#turns.values()) {
+        if (currentTurn.owner?.id === owner.id) {
+          currentTurn.terminalDisposition = fallbackDisposition;
+          currentTurn.runtimeState = "finishing";
+        }
+      }
+      this.#retireSourcesForOwner(owner.id);
+    }
     this.#turns.delete(turnId);
+    let retirementError: unknown;
     if (owner) {
-      this.#finalizeRetiredSessionIfSettled(owner.id);
+      if (shouldRetireOwner) {
+        try {
+          this.#publishRuntimeChange(owner.id);
+        } catch (err) {
+          retirementError = err;
+        }
+      }
+      try {
+        this.#finalizeRetiredSessionIfSettled(owner.id);
+      } catch (err) {
+        retirementError ??= err;
+      }
+    }
+    if (repairError) {
+      throw repairError;
+    }
+    if (retirementError) {
+      throw retirementError;
     }
   }
 
@@ -731,7 +809,7 @@ export class ConversationModeSessionCoordinator {
     }
     return this.#mutateActiveSession(owner.id, (session) => {
       const eligibleFirstRows =
-        owner.mode === "live_vision" || owner.mode === "ambient"
+        owner.mode === "live_vision"
           ? rows
           : rows.filter((row) => row.startsDisplayBoundary);
       const earliest = eligibleFirstRows.reduce<TrackedRow | undefined>(
@@ -820,17 +898,23 @@ export class ConversationModeSessionCoordinator {
       }
     }
     const endedAt = Date.now();
-    const finalized = this.#mutateActiveSession(sessionId, (session) =>
-      this.#dependencies.finalize({
-        id: session.id,
-        conversationId: this.#conversationId,
-        expectedRevision: session.revision,
-        status: disposition.status,
-        endedAt,
-        endReason: disposition.endReason,
-        lastActivityAt: endedAt,
-      }),
-    );
+    let finalized: boolean;
+    try {
+      finalized = this.#mutateActiveSession(sessionId, (session) =>
+        this.#dependencies.finalize({
+          id: session.id,
+          conversationId: this.#conversationId,
+          expectedRevision: session.revision,
+          status: disposition.status,
+          endedAt,
+          endReason: disposition.endReason,
+          lastActivityAt: endedAt,
+        }),
+      );
+    } catch (err) {
+      this.#retiredDispositions.delete(sessionId);
+      throw err;
+    }
     if (finalized) {
       this.#retiredDispositions.delete(sessionId);
       this.#dependencies.publishMessagesChanged(this.#conversationId);
@@ -845,6 +929,26 @@ export class ConversationModeSessionCoordinator {
       }
     }
     return false;
+  }
+
+  #hasSourceLifetimeSource(sessionId: string): boolean {
+    for (const source of this.#sources.values()) {
+      if (source.session.id === sessionId && source.lifetime === "source") {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  #takeStructuralAssociation(
+    response: ModeSessionStructuralResponse,
+  ): StructuralAssociation | undefined {
+    const key = associationKey(response.kind, response.responseId);
+    const association = this.#structuralAssociations.get(key);
+    if (!association || !this.#structuralAssociations.delete(key)) {
+      return undefined;
+    }
+    return association;
   }
 
   #publishRuntimeChange(sessionId: string): boolean {

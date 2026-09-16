@@ -328,34 +328,49 @@ function settleModeSessionTurn(
   turnId: string,
   fallback: { status: "completed" | "interrupted"; endReason: string },
 ): void {
-  if (!ctx.modeSessions.getTurnOwner(turnId)) {
-    ctx.modeSessions.releaseTurn(turnId);
-    return;
+  try {
+    if (!ctx.modeSessions.getTurnOwner(turnId)) {
+      ctx.modeSessions.releaseTurn(turnId);
+      return;
+    }
+    if (
+      fallback.status === "completed" &&
+      recordModeSessionStructuralWaits(ctx, turnId)
+    ) {
+      ctx.modeSessions.releaseTurn(turnId);
+      return;
+    }
+    if (ctx.modeSessions.keepsSessionOpenAfterTurn(turnId)) {
+      ctx.modeSessions.releaseTurn(turnId);
+      return;
+    }
+    ctx.modeSessions.beginDraining(turnId);
+    const disposition = ctx.modeSessions.getTerminalDisposition(turnId);
+    if (disposition) {
+      ctx.modeSessions.releaseTurn(turnId);
+      return;
+    }
+    ctx.modeSessions.finalizeTurn({
+      turnId,
+      status: fallback.status,
+      endedAt: Date.now(),
+      endReason: fallback.endReason,
+      lastActivityAt: Date.now(),
+    });
+  } catch (err) {
+    log.warn(
+      { err, conversationId: ctx.conversationId, turnId },
+      "Mode-session turn settlement failed",
+    );
+    try {
+      ctx.modeSessions.releaseTurn(turnId, fallback);
+    } catch (releaseErr) {
+      log.warn(
+        { err: releaseErr, conversationId: ctx.conversationId, turnId },
+        "Mode-session turn cleanup failed",
+      );
+    }
   }
-  if (
-    fallback.status === "completed" &&
-    recordModeSessionStructuralWaits(ctx, turnId)
-  ) {
-    ctx.modeSessions.releaseTurn(turnId);
-    return;
-  }
-  if (ctx.modeSessions.keepsSessionOpenAfterTurn(turnId)) {
-    ctx.modeSessions.releaseTurn(turnId);
-    return;
-  }
-  ctx.modeSessions.beginDraining(turnId);
-  const disposition = ctx.modeSessions.getTerminalDisposition(turnId);
-  if (disposition) {
-    ctx.modeSessions.releaseTurn(turnId);
-    return;
-  }
-  ctx.modeSessions.finalizeTurn({
-    turnId,
-    status: fallback.status,
-    endedAt: Date.now(),
-    endReason: fallback.endReason,
-    lastActivityAt: Date.now(),
-  });
 }
 
 // ── abort watchdog ───────────────────────────────────────────────────

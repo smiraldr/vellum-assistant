@@ -351,6 +351,28 @@ describe("ConversationModeSessionCoordinator", () => {
     });
   });
 
+  test("starts Ambient display timing at its first assistant row", () => {
+    const ambientSession = activeSession({ mode: "ambient" });
+    const store = createDependencies(ambientSession);
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, ambientSession, "camera-source");
+
+    coordinator.trackPersistedRow("turn-123", "camera-123", 80, {
+      startsDisplayBoundary: false,
+    });
+    coordinator.trackPersistedRow("turn-123", "assistant-123", 90);
+    coordinator.claimTurn("turn-123", handle, 120);
+
+    expect(store.session()).toMatchObject({
+      firstIncludedAt: 90,
+      firstIncludedMessageId: "assistant-123",
+      lastOwnedMessageId: "assistant-123",
+    });
+  });
+
   test("inherits only an exact unconsumed structural response", () => {
     const store = createDependencies();
     const coordinator = new ConversationModeSessionCoordinator(
@@ -370,7 +392,10 @@ describe("ConversationModeSessionCoordinator", () => {
     expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
       "waiting",
     );
-    coordinator.releaseTurn("turn-origin");
+    coordinator.releaseTurn("turn-origin", {
+      status: "completed",
+      endReason: "turn_settled",
+    });
     expect(coordinator.hasResidentWork()).toBe(true);
     expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
       "waiting",
@@ -459,6 +484,171 @@ describe("ConversationModeSessionCoordinator", () => {
       }),
     ).toBeUndefined();
     expect(coordinator.invalidateAllStructuralWaits()).toBe(0);
+  });
+
+  test("completes a released structural owner when its response has no follow-up turn", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-origin", handle, 110);
+    coordinator.recordStructuralWait("turn-origin", {
+      kind: "surface",
+      responseId: "surface-launcher",
+    });
+    coordinator.releaseTurn("turn-origin");
+
+    expect(
+      coordinator.settleStructuralWait(
+        { kind: "surface", responseId: "surface-launcher" },
+        { status: "completed", endReason: "surface_launch_settled" },
+      ),
+    ).toBe(true);
+
+    expect(coordinator.descriptorFor("session-123")).toEqual({
+      summary: expect.objectContaining({
+        status: "completed",
+        endReason: "surface_launch_settled",
+      }),
+    });
+    expect(coordinator.hasResidentWork()).toBe(false);
+    expect(coordinator.claimTurn("turn-late", handle, 120)).toBeUndefined();
+  });
+
+  test("drains accepted work before completing a structural owner", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-origin", handle, 110);
+    coordinator.recordStructuralWait("turn-origin", {
+      kind: "surface",
+      responseId: "surface-launcher",
+    });
+    coordinator.releaseTurn("turn-origin");
+    coordinator.claimTurn("turn-accepted", handle, 120);
+
+    coordinator.settleStructuralWait(
+      { kind: "surface", responseId: "surface-launcher" },
+      { status: "completed", endReason: "surface_launch_settled" },
+    );
+
+    expect(coordinator.getTerminalDisposition("turn-accepted")).toEqual({
+      status: "completed",
+      endReason: "surface_launch_settled",
+    });
+    expect(coordinator.descriptorFor("session-123")).toEqual({
+      summary: expect.objectContaining({ status: "active" }),
+      runtimeState: "finishing",
+    });
+    expect(coordinator.claimTurn("turn-late", handle, 130)).toBeUndefined();
+
+    coordinator.releaseTurn("turn-accepted");
+    expect(coordinator.descriptorFor("session-123")).toEqual({
+      summary: expect.objectContaining({
+        status: "completed",
+        endReason: "surface_launch_settled",
+      }),
+    });
+    expect(coordinator.hasResidentWork()).toBe(false);
+  });
+
+  test("keeps a source-lifetime owner active after settling an incidental surface wait", () => {
+    const ambientSession = activeSession({ mode: "ambient" });
+    const store = createDependencies(ambientSession);
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = coordinator.activateSource({
+      sourceId: "camera-source",
+      generation: 1,
+      mode: "ambient",
+      sourceStartedAt: 100,
+      lifetime: "source",
+    });
+    expect(handle).toBeDefined();
+    coordinator.claimTurn("turn-origin", handle!, 110);
+    coordinator.recordStructuralWait("turn-origin", {
+      kind: "surface",
+      responseId: "surface-launcher",
+    });
+    coordinator.releaseTurn("turn-origin");
+
+    coordinator.settleStructuralWait(
+      { kind: "surface", responseId: "surface-launcher" },
+      { status: "completed", endReason: "surface_launch_settled" },
+    );
+
+    expect(coordinator.descriptorFor(handle!.id)).toEqual({
+      summary: expect.objectContaining({ status: "active", mode: "ambient" }),
+    });
+    expect(coordinator.hasResidentWork()).toBe(true);
+    expect(coordinator.claimTurn("turn-later", handle!, 120)).toEqual({
+      id: handle!.id,
+      mode: "ambient",
+    });
+    coordinator.releaseTurn("turn-later", {
+      status: "completed",
+      endReason: "turn_settled",
+    });
+    expect(coordinator.descriptorFor(handle!.id)).toEqual({
+      summary: expect.objectContaining({ status: "active", mode: "ambient" }),
+    });
+    expect(coordinator.hasResidentWork()).toBe(true);
+  });
+
+  test("drops turn-scoped residency when fallback finalization throws", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator("conv-123", {
+      ...store.dependencies,
+      finalize: () => {
+        throw new Error("session store unavailable");
+      },
+    });
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-123", handle, 110);
+
+    expect(() =>
+      coordinator.releaseTurn("turn-123", {
+        status: "completed",
+        endReason: "turn_settled",
+      }),
+    ).toThrow("session store unavailable");
+
+    expect(coordinator.hasResidentWork()).toBe(false);
+    expect(coordinator.claimTurn("turn-late", handle, 120)).toBeUndefined();
+  });
+
+  test("drops launcher residency when structural settlement persistence throws", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator("conv-123", {
+      ...store.dependencies,
+      finalize: () => {
+        throw new Error("session store unavailable");
+      },
+    });
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-origin", handle, 110);
+    coordinator.recordStructuralWait("turn-origin", {
+      kind: "surface",
+      responseId: "surface-launcher",
+    });
+    coordinator.releaseTurn("turn-origin");
+
+    expect(() =>
+      coordinator.settleStructuralWait(
+        { kind: "surface", responseId: "surface-launcher" },
+        { status: "completed", endReason: "surface_launch_settled" },
+      ),
+    ).toThrow("session store unavailable");
+
+    expect(coordinator.hasResidentWork()).toBe(false);
+    expect(coordinator.claimTurn("turn-late", handle, 120)).toBeUndefined();
   });
 
   test("does not inherit recovered terminal state", () => {
