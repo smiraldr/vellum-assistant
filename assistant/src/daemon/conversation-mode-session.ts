@@ -380,14 +380,7 @@ export class ConversationModeSessionCoordinator {
     };
     turn.rows.push(row);
     if (turn.owner) {
-      const stamped = this.#stampRow(row, turn.owner);
-      const boundariesUpdated = this.#updateOrdinaryBoundaries(
-        turn.owner,
-        turn.rows.filter((candidate) => candidate.stamped),
-      );
-      if (stamped || boundariesUpdated) {
-        this.#dependencies.publishMessagesChanged(this.#conversationId);
-      }
+      this.#repairTrackedRows(turn);
     }
   }
 
@@ -450,6 +443,7 @@ export class ConversationModeSessionCoordinator {
     if (!turn?.owner) {
       return undefined;
     }
+    this.#repairTrackedRows(turn);
     this.#turns.delete(fromTurnId);
     this.#turns.set(toTurnId, {
       owner: turn.owner,
@@ -572,6 +566,7 @@ export class ConversationModeSessionCoordinator {
     if (!turn?.owner) {
       return false;
     }
+    this.#repairTrackedRows(turn);
     const lastOwnedMessageId = lastStampedRow(turn.rows)?.id;
     const finalized = this.#mutateActiveSession(turn.owner.id, (session) =>
       this.#dependencies.finalize({
@@ -598,7 +593,11 @@ export class ConversationModeSessionCoordinator {
   }
 
   releaseTurn(turnId: string): void {
-    const owner = this.#turns.get(turnId)?.owner;
+    const turn = this.#turns.get(turnId);
+    if (turn?.owner) {
+      this.#repairTrackedRows(turn);
+    }
+    const owner = turn?.owner;
     this.#turns.delete(turnId);
     if (owner) {
       this.#finalizeRetiredSessionIfSettled(owner.id);

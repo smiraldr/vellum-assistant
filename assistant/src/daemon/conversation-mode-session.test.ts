@@ -620,7 +620,7 @@ describe("ConversationModeSessionCoordinator", () => {
     expect(store.publications()).toBeGreaterThan(0);
   });
 
-  test("does not advance canonical boundaries past a failed metadata stamp", () => {
+  test("retries an earlier failed metadata stamp when a later row persists", () => {
     const store = createDependencies();
     const coordinator = new ConversationModeSessionCoordinator(
       "conv-123",
@@ -638,10 +638,68 @@ describe("ConversationModeSessionCoordinator", () => {
       lastOwnedMessageId: "assistant-123",
     });
     store.allowStamp("tool-result-123");
-    expect(coordinator.repairTrackedRows("turn-123")).toBe(true);
+    coordinator.trackPersistedRow("turn-123", "assistant-456", 130);
     expect(store.session()).toMatchObject({
       firstIncludedMessageId: "assistant-123",
-      lastOwnedMessageId: "tool-result-123",
+      lastOwnedMessageId: "assistant-456",
+    });
+    expect(store.stamps).toEqual([
+      { messageId: "assistant-123", sessionId: "session-123" },
+      { messageId: "tool-result-123", sessionId: "session-123" },
+      { messageId: "assistant-456", sessionId: "session-123" },
+    ]);
+  });
+
+  test("retries a failed metadata stamp before releasing turn state", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-123", handle, 110);
+    store.failStamp("assistant-123");
+    coordinator.trackPersistedRow("turn-123", "assistant-123", 120);
+
+    store.allowStamp("assistant-123");
+    coordinator.releaseTurn("turn-123");
+
+    expect(store.stamps).toEqual([
+      { messageId: "assistant-123", sessionId: "session-123" },
+    ]);
+    expect(store.session()).toMatchObject({
+      firstIncludedMessageId: "assistant-123",
+      lastOwnedMessageId: "assistant-123",
+    });
+  });
+
+  test("retries a failed final row before terminal persistence", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-123", handle, 110);
+    store.failStamp("assistant-123");
+    coordinator.trackPersistedRow("turn-123", "assistant-123", 120);
+
+    store.allowStamp("assistant-123");
+    expect(
+      coordinator.finalizeTurn({
+        turnId: "turn-123",
+        status: "completed",
+        endedAt: 130,
+        endReason: "completed",
+      }),
+    ).toBe(true);
+
+    expect(store.stamps).toEqual([
+      { messageId: "assistant-123", sessionId: "session-123" },
+    ]);
+    expect(store.session()).toMatchObject({
+      status: "completed",
+      lastOwnedMessageId: "assistant-123",
     });
   });
 
@@ -711,6 +769,29 @@ describe("ConversationModeSessionCoordinator", () => {
     expect(store.session()).toMatchObject({
       firstIncludedMessageId: "assistant-123",
       lastOwnedMessageId: "assistant-456",
+    });
+  });
+
+  test("repairs tracked rows before a handoff discards their turn state", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-123", handle, 110);
+    store.failStamp("assistant-123");
+    coordinator.trackPersistedRow("turn-123", "assistant-123", 120);
+
+    store.allowStamp("assistant-123");
+    coordinator.transferTurn("turn-123", "turn-456");
+
+    expect(store.stamps).toEqual([
+      { messageId: "assistant-123", sessionId: "session-123" },
+    ]);
+    expect(store.session()).toMatchObject({
+      firstIncludedMessageId: "assistant-123",
+      lastOwnedMessageId: "assistant-123",
     });
   });
 });
