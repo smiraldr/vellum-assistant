@@ -613,10 +613,18 @@ export class ConversationModeSessionCoordinator {
     if (summary.status !== "active") {
       return { summary };
     }
+    let hasOwnedTurn = false;
     for (const turn of this.#turns.values()) {
-      if (turn.owner?.id === sessionId && turn.runtimeState) {
+      if (turn.owner?.id !== sessionId) {
+        continue;
+      }
+      hasOwnedTurn = true;
+      if (turn.runtimeState) {
         return { summary, runtimeState: turn.runtimeState };
       }
+    }
+    if (!hasOwnedTurn && this.#hasAssociationForOwner(sessionId)) {
+      return { summary, runtimeState: "waiting" };
     }
     return { summary };
   }

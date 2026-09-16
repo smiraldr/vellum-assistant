@@ -371,6 +371,9 @@ describe("ConversationModeSessionCoordinator", () => {
     );
     coordinator.releaseTurn("turn-origin");
     expect(coordinator.hasResidentWork()).toBe(true);
+    expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
+      "waiting",
+    );
 
     expect(
       coordinator.acceptTurn("turn-wrong-kind", {
@@ -384,6 +387,21 @@ describe("ConversationModeSessionCoordinator", () => {
         responseId: "interaction-456",
       }),
     ).toBeUndefined();
+    expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
+      "waiting",
+    );
+    coordinator.acceptTurn("turn-independent");
+    expect(coordinator.claimTurn("turn-independent", handle, 120)).toEqual({
+      id: "session-123",
+      mode: "computer_use",
+    });
+    expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
+      undefined,
+    );
+    coordinator.releaseTurn("turn-independent");
+    expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
+      "waiting",
+    );
     expect(
       coordinator.acceptTurn("turn-resumed", {
         kind: "question",
@@ -424,6 +442,10 @@ describe("ConversationModeSessionCoordinator", () => {
       kind: "surface",
       responseId: "surface-123",
     });
+    coordinator.releaseTurn("turn-origin");
+    expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
+      "waiting",
+    );
 
     expect(coordinator.invalidateAllStructuralWaits()).toBe(1);
     expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
@@ -451,6 +473,10 @@ describe("ConversationModeSessionCoordinator", () => {
       kind: "question",
       responseId: "interaction-123",
     });
+    coordinator.releaseTurn("turn-origin");
+    expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
+      "waiting",
+    );
     store.replaceSession(
       activeSession({
         status: "interrupted",
@@ -468,6 +494,37 @@ describe("ConversationModeSessionCoordinator", () => {
     ).toBeUndefined();
     expect(coordinator.descriptorFor("session-123")).toEqual({
       summary: store.session(),
+    });
+  });
+
+  test("clears a released structural wait when its source retires", () => {
+    const store = createDependencies();
+    const coordinator = new ConversationModeSessionCoordinator(
+      "conv-123",
+      store.dependencies,
+    );
+    const handle = registerSource(coordinator, store.session());
+    coordinator.claimTurn("turn-origin", handle, 110);
+    coordinator.recordStructuralWait("turn-origin", {
+      kind: "confirmation",
+      responseId: "confirmation-123",
+    });
+    coordinator.releaseTurn("turn-origin");
+    expect(coordinator.descriptorFor("session-123")?.runtimeState).toBe(
+      "waiting",
+    );
+
+    expect(
+      coordinator.retireSource(handle, {
+        status: "interrupted",
+        endReason: "computer_use_stopped",
+      }),
+    ).toBe(true);
+    expect(coordinator.descriptorFor("session-123")).toEqual({
+      summary: expect.objectContaining({
+        status: "interrupted",
+        endReason: "computer_use_stopped",
+      }),
     });
   });
 
