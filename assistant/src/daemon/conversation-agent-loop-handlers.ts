@@ -12,7 +12,7 @@ import { v4 as uuid } from "uuid";
 
 import { onActivationToolCall } from "../activation/turn-hooks.js";
 import type { AgentEvent } from "../agent/loop.js";
-import { isComputerUseToolCall } from "../api/computer-use-tool.js";
+import { resolveComputerUseToolName } from "../api/computer-use-tool.js";
 import type { AnsweredQuestion } from "../api/events/question-answered.js";
 import type { AssistantEvent } from "../api/index.js";
 import type {
@@ -1791,9 +1791,13 @@ export function handleToolUse(
   event: Extract<AgentEvent, { type: "tool_use" }>,
 ): void {
   state.toolUseIdToName.set(event.id, event.name);
-  if (isComputerUseToolCall(event.name, event.input)) {
+  const computerUseToolName = resolveComputerUseToolName(
+    event.name,
+    event.input,
+  );
+  if (computerUseToolName) {
     state.computerUseToolUseIds.push(event.id);
-    state.computerUseToolNames.set(event.id, event.name);
+    state.computerUseToolNames.set(event.id, computerUseToolName);
   }
   // Activation checklist: keep the launched task's live step count moving.
   // Fire-and-forget and throttled inside the hook; a no-op for every

@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
 
-import { isComputerUseToolCall } from "./computer-use-tool.js";
+import {
+  isComputerUseToolCall,
+  resolveComputerUseToolName,
+} from "./computer-use-tool.js";
 
 describe("isComputerUseToolCall", () => {
   test("recognizes direct and skill-wrapped computer-use calls", () => {
@@ -8,6 +11,17 @@ describe("isComputerUseToolCall", () => {
     expect(
       isComputerUseToolCall("skill_execute", { tool: "computer_use_type" }),
     ).toBe(true);
+  });
+
+  test("resolves the direct or wrapped computer-use tool name", () => {
+    expect(resolveComputerUseToolName("computer_use_click", {})).toBe(
+      "computer_use_click",
+    );
+    expect(
+      resolveComputerUseToolName("skill_execute", {
+        tool: "computer_use_scroll",
+      }),
+    ).toBe("computer_use_scroll");
   });
 
   test("rejects unrelated media tools and malformed skill input", () => {
@@ -32,5 +46,10 @@ describe("isComputerUseToolCall", () => {
         _raw: '{"tool":"computer_use_click"}',
       }),
     ).toBe(false);
+    expect(
+      resolveComputerUseToolName("skill_execute", {
+        _raw: '{"tool":"computer_use_click"}',
+      }),
+    ).toBeUndefined();
   });
 });
