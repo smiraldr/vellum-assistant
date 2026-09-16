@@ -9,10 +9,10 @@ import {
   setCesReconnect,
 } from "../security/secure-keys.js";
 import { getLogger } from "../util/logger.js";
-import { type CesClient, createCesClient } from "./client.js";
+import { openCesRpcSession } from "./ces-connect.js";
+import { type CesClient } from "./client.js";
 import {
   type CesProcessManager,
-  CesUnavailableError,
   createCesProcessManager,
 } from "./process-manager.js";
 import {
@@ -45,9 +45,9 @@ interface CesStartupResult {
 }
 
 /**
- * Start the CES process and perform the RPC handshake. Returns immediately with
- * handles to the in-flight initialization — callers don't need to await this
- * for startup to continue.
+ * Open the assistant's CES RPC client and perform the handshake. Returns
+ * immediately with handles to the in-flight initialization: callers don't
+ * need to await this for startup to continue.
  *
  * CES serves a multi-connection Unix socket, so this is called at the
  * process level and child processes may open their own connections.
@@ -59,56 +59,39 @@ function startCesProcess(config: AssistantConfig): CesStartupResult {
 
   const handshakePromise = (async (): Promise<CesClient | undefined> => {
     try {
-      const transport = await pm.start();
-      if (abortController.signal.aborted) {
-        throw new Error("CES initialization aborted during shutdown");
-      }
-      const client = createCesClient(transport);
-      currentClient = client;
       // Resolve the assistant API key so CES can use it for platform
       // credential materialisation. In managed mode the key is provisioned
-      // after hatch and stored in the credential store — CES can't read
+      // after hatch and stored in the credential store. CES can't read
       // the env var, so we pass it via the handshake.
       const proxyCtx = await resolveManagedProxyContext();
-      const assistantId = getPlatformAssistantId();
-      const { accepted, reason } = await client.handshake({
-        ...(proxyCtx.assistantApiKey
-          ? { assistantApiKey: proxyCtx.assistantApiKey }
-          : {}),
-        ...(assistantId ? { assistantId } : {}),
-      });
       if (abortController.signal.aborted) {
-        client.close();
-        throw new Error("CES initialization aborted during shutdown");
+        return undefined;
       }
-      if (accepted) {
+      const assistantId = getPlatformAssistantId();
+      const session = await openCesRpcSession({
+        processManager: pm,
+        signal: abortController.signal,
+        handshake: {
+          ...(proxyCtx.assistantApiKey
+            ? { assistantApiKey: proxyCtx.assistantApiKey }
+            : {}),
+          ...(assistantId ? { assistantId } : {}),
+        },
+      });
+      currentClient = session?.client;
+      if (session) {
         log.info(
           "CES client initialized and handshake accepted (server-level)",
         );
-        return client;
       }
-      log.warn(
-        { reason },
-        "CES handshake rejected — CES tools will be unavailable",
-      );
-      client.close();
-      currentClient = undefined;
-      await pm.stop();
-      return undefined;
+      return session?.client;
     } catch (err) {
-      if (err instanceof CesUnavailableError) {
-        log.info(
-          { reason: err.message },
-          "CES is not available — CES tools will be unavailable",
-        );
-      } else {
-        log.warn(
-          { error: err instanceof Error ? err.message : String(err) },
-          "Failed to initialize CES client — CES tools will be unavailable",
-        );
-      }
-      await pm.stop().catch(() => {});
+      log.warn(
+        { error: err instanceof Error ? err.message : String(err) },
+        "Failed to initialize CES client",
+      );
       currentClient = undefined;
+      await pm.stop().catch(() => {});
       return undefined;
     }
   })();
@@ -154,11 +137,11 @@ function updateClientRef(client: CesClient | undefined): void {
 }
 
 /**
- * Bring up the daemon's CES connection: start the process, run the handshake
- * (blocking up to a 20s timeout so credential reads can route through CES
- * before provider init), register the reconnection callback, and keep the live
- * client reference in sync. Non-fatal — on failure the daemon falls back to the
- * direct credential store.
+ * Open the assistant's CES RPC client: handshake (blocking up to a 20s
+ * timeout so credential reads can route through CES before provider init),
+ * register the reconnection callback, and keep the live client reference in
+ * sync. Non-fatal: on failure the assistant falls back to the direct
+ * credential store.
  */
 export async function startCes(config: AssistantConfig): Promise<void> {
   const cesResult = startCesProcess(config);
@@ -215,32 +198,20 @@ export async function startCes(config: AssistantConfig): Promise<void> {
     const startupAssistantId = getPlatformAssistantId();
 
     setCesReconnect(async () => {
-      try {
-        await pm.stop();
-        const transport = await pm.start();
-        const newClient = createCesClient(transport);
-        const { accepted, reason } = await newClient.handshake({
+      await pm.stop();
+      const session = await openCesRpcSession({
+        processManager: pm,
+        handshake: {
           ...(startupProxyCtx.assistantApiKey
             ? { assistantApiKey: startupProxyCtx.assistantApiKey }
             : {}),
           ...(startupAssistantId ? { assistantId: startupAssistantId } : {}),
-        });
-        if (accepted) {
-          log.info("CES reconnection handshake accepted");
-          return newClient;
-        }
-        log.warn({ reason }, "CES reconnection handshake rejected");
-        newClient.close();
-        await pm.stop().catch(() => {});
-        return undefined;
-      } catch (err) {
-        log.warn(
-          { error: err instanceof Error ? err.message : String(err) },
-          "CES reconnection attempt failed",
-        );
-        await pm.stop().catch(() => {});
-        return undefined;
+        },
+      });
+      if (session) {
+        log.info("CES reconnection handshake accepted");
       }
+      return session?.client;
     });
 
     // Proactive reconnect: when the transport dies (socket close, process
