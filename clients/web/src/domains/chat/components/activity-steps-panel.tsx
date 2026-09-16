@@ -133,11 +133,7 @@ function buildActivityScreenshotGalleryForIds(
   return gallery;
 }
 
-export function ActivityStepsPanel({
-  payload,
-  onClose,
-  assistantId,
-}: {
+interface ActivityStepsPanelProps {
   payload: ActivityStepsPayload;
   onClose: () => void;
   /**
@@ -146,7 +142,47 @@ export function ActivityStepsPanel({
    * resolve against the right workspace.
    */
   assistantId?: string | null;
-}) {
+}
+
+export function ActivityStepsPanel({
+  payload,
+  onClose,
+  assistantId,
+}: ActivityStepsPanelProps) {
+  return (
+    <ActivityStepsPanelTarget
+      key={activityStepsTargetKey(payload)}
+      payload={payload}
+      onClose={onClose}
+      assistantId={assistantId}
+    />
+  );
+}
+
+function activityStepsTargetKey(payload: ActivityStepsPayload): string {
+  if (payload.messageId != null) {
+    const rawToolCallId = payload.groupToolCallIds?.[0];
+    return rawToolCallId != null
+      ? JSON.stringify(["message", payload.messageId, "tool", rawToolCallId])
+      : JSON.stringify([
+          "message",
+          payload.messageId,
+          "index",
+          payload.groupIndex ?? null,
+        ]);
+  }
+
+  const snapshotToolCallId = payload.toolCalls[0]?.id;
+  return snapshotToolCallId != null
+    ? JSON.stringify(["snapshot", "tool", snapshotToolCallId])
+    : JSON.stringify(["snapshot", "index", payload.groupIndex ?? null]);
+}
+
+function ActivityStepsPanelTarget({
+  payload,
+  onClose,
+  assistantId,
+}: ActivityStepsPanelProps) {
   const { t } = useTranslation("chat");
   // Level-2 drill-in: the step detail currently open, or null for the
   // timeline. Local state — the drawer level is navigation within the panel,

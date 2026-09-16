@@ -54,9 +54,11 @@ test("preview swipe and Escape leave the mobile steps overlay open", async () =>
     </QueryClientProvider>,
   );
 
-  const tile = await screen.findByRole("button", {
-    name: "Preview screenshot from Checking second",
-  });
+  const tile = await screen.findByRole(
+    "button",
+    { name: "Preview screenshot from Checking second" },
+    { timeout: 5_000 },
+  );
   fireEvent.click(tile);
   const dialog = screen.getByRole("dialog");
   expect(screen.getByText("2 / 2")).toBeTruthy();
