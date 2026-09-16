@@ -295,7 +295,7 @@ export const ScreenshotAndCanonicalFiles: Story = {
   play: async ({ canvasElement }) => {
     await userEvent.click(
       within(canvasElement).getByRole("button", {
-        name: "Show all files (1 more)",
+        name: "Show all files (2 more)",
       }),
     );
   },

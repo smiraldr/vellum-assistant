@@ -247,8 +247,6 @@ export function TranscriptMessageBody({
     [orderedMessageToolCalls, message.attachments, embeddedImageNames],
   );
   const visibleAssistantAttachments = imagePresentation.visibleAttachments;
-  const hasVisibleAssistantAttachments =
-    !isStandaloneFrameGroup && visibleAssistantAttachments.length > 0;
   const selectedImagesByGroupIndex = groups.map((group) => {
     if (group.type !== "activity") {
       return [];
@@ -1425,7 +1423,7 @@ export function TranscriptMessageBody({
         {pendingVisualToolUseIds.map((toolUseId) => (
           <VisualPlaceholder key={`visual-pending-${toolUseId}`} />
         ))}
-        {hasVisibleAssistantAttachments && (
+        {hasCanonicalAttachments && (
           <MessageAttachments
             attachments={visibleAssistantAttachments}
             panelAttachments={message.attachments ?? []}

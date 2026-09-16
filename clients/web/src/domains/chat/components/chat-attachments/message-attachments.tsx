@@ -17,8 +17,8 @@ interface MessageAttachmentsProps {
 
 /**
  * How many attachment squares render inline before the strip collapses.
- * A message with more than this many attachments shows the first
- * VISIBLE_LIMIT squares plus one overflow tile.
+ * A message with more than this many canonical files shows the first
+ * VISIBLE_LIMIT filtered squares plus one Files tile.
  */
 const VISIBLE_LIMIT = 5;
 
@@ -29,8 +29,8 @@ const VISIBLE_LIMIT = 5;
  * opens a full-screen preview modal - the modal handles type-specific
  * rendering (image/video/fallback) and lazily fetches missing content when
  * needed. A hover overlay on each square provides direct download without
- * opening the preview first. Past {@link VISIBLE_LIMIT} the strip collapses
- * behind an overflow tile that opens the files side panel.
+ * opening the preview first. Past {@link VISIBLE_LIMIT} canonical files, the
+ * strip includes a tile that opens the complete Files side panel.
  */
 export function MessageAttachments({
   attachments,
@@ -41,12 +41,15 @@ export function MessageAttachments({
   const { displayAttachments, renderSquare, previewModal } =
     useAttachmentSquares({ attachments, assistantId });
 
-  if (attachments.length === 0) {
+  const visible = displayAttachments.slice(0, VISIBLE_LIMIT);
+  const hasCanonicalOverflow = panelAttachments.length > VISIBLE_LIMIT;
+  const overflowCount = hasCanonicalOverflow
+    ? panelAttachments.length - visible.length
+    : displayAttachments.length - visible.length;
+
+  if (visible.length === 0 && overflowCount === 0) {
     return null;
   }
-
-  const visible = displayAttachments.slice(0, VISIBLE_LIMIT);
-  const overflowCount = displayAttachments.length - visible.length;
 
   return (
     <>

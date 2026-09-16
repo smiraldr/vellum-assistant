@@ -148,7 +148,7 @@ describe("MessageAttachments", () => {
   });
 
   test("keeps the visible strip separate from the canonical Files payload", () => {
-    const visibleAttachments = makeImageAttachments(6);
+    const visibleAttachments = makeImageAttachments(5);
     const automaticScreenshot = makeDisplayAttachment({
       id: "automatic-screenshot",
       computerUseScreenshot: true,
@@ -169,9 +169,33 @@ describe("MessageAttachments", () => {
     fireEvent.click(getByLabelText("photo-0.png"));
     expect(
       getByTestId("preview-modal").getAttribute("data-sibling-count"),
-    ).toBe("6");
+    ).toBe("5");
 
     fireEvent.click(getByRole("button", { name: "Show all files (1 more)" }));
+    expect(
+      useViewerStore
+        .getState()
+        .activeMessageFiles?.attachments.map((candidate) => candidate.id),
+    ).toEqual(panelAttachments.map((candidate) => candidate.id));
+  });
+
+  test("keeps Files reachable when every canonical overflow file is filtered", () => {
+    const panelAttachments = makeImageAttachments(6).map((attachment) => ({
+      ...attachment,
+      computerUseScreenshot: true,
+    }));
+    const { container, getByRole, getByText } = render(
+      <MessageAttachments
+        attachments={[]}
+        panelAttachments={panelAttachments}
+        messageId="msg-1"
+      />,
+    );
+
+    expect(squareLabels(container)).toHaveLength(0);
+    expect(getByText("+6")).toBeTruthy();
+
+    fireEvent.click(getByRole("button", { name: "Show all files (6 more)" }));
     expect(
       useViewerStore
         .getState()

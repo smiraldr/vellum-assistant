@@ -2370,6 +2370,48 @@ describe("TranscriptMessageBody", () => {
     ).toHaveLength(1);
   });
 
+  test("mounts Files access when every canonical overflow attachment is filtered", () => {
+    const screenshot: ChatMessageToolCall = {
+      id: "cu-selected",
+      name: "computer_use_screenshot",
+      input: { activity: "Checking the report" },
+      imageDataList: ["selected"],
+      completedAt: 1,
+    };
+    const attachments = Array.from({ length: 6 }, (_, index) => ({
+      id: `automatic-shot-${index}`,
+      filename: `automatic-${index}.png`,
+      mimeType: "image/png",
+      sizeBytes: 1,
+      previewUrl: null,
+      computerUseScreenshot: true,
+    }));
+    const { container } = render(
+      <TranscriptMessageBody
+        message={{
+          id: "computer-use-overflow",
+          role: "assistant",
+          contentBlocks: [
+            toolUseBlock(screenshot),
+            textBlock("The report is ready."),
+          ],
+          toolCalls: [screenshot],
+          attachments,
+        }}
+        onSurfaceAction={noop}
+      />,
+    );
+
+    const strip = container.querySelector("[data-testid='attachments']");
+    expect(strip?.getAttribute("data-visible-attachment-ids")).toBe("");
+    expect(strip?.getAttribute("data-panel-attachment-ids")).toBe(
+      attachments.map((attachment) => attachment.id).join(","),
+    );
+    expect(
+      container.querySelectorAll("[data-testid='tool-result-image']"),
+    ).toHaveLength(1);
+  });
+
   test("retains an automatic screenshot attachment when no tool image exists", () => {
     const screenshotFree: ChatMessageToolCall = {
       id: "cu-no-image",
@@ -2527,7 +2569,11 @@ describe("TranscriptMessageBody", () => {
         "[data-testid='tool-result-image'], [data-testid='tool-result-image-placeholder']",
       ),
     ).toHaveLength(1);
-    expect(container.querySelector("[data-testid='attachments']")).toBeNull();
+    const strip = container.querySelector("[data-testid='attachments']");
+    expect(strip?.getAttribute("data-visible-attachment-ids")).toBe("");
+    expect(strip?.getAttribute("data-panel-attachment-ids")).toBe(
+      "history-shot",
+    );
   });
 
   test("infers non-png MIME types for assistant tool-result images", () => {
