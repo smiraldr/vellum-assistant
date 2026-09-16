@@ -72,6 +72,11 @@
     "thinkingTitle": "Pensando",
     "viewThinkingAria": "Ver razonamiento"
   },
+  "computerUseScreenshotPreview": {
+    "unavailable": "La captura de pantalla más reciente no está disponible.",
+    "unavailableShowingPrevious": "La captura de pantalla más reciente no está disponible. Se muestra la captura anterior.",
+    "updating": "Actualizando la captura de pantalla..."
+  },
   "addToChatSheet": {
     "camera": "Cámara",
     "closeAriaLabel": "Cerrar",

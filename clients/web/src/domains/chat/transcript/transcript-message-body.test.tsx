@@ -359,6 +359,23 @@ import { useClientFeatureFlagStore } from "@/stores/client-feature-flag-store";
 import { useWorkflowStore } from "@/domains/chat/workflow-store";
 
 const noop = () => {};
+const realImageDecode = globalThis.Image.prototype.decode;
+globalThis.Image.prototype.decode = async () => {};
+
+async function waitForComputerUseScreenshot(
+  container: HTMLElement,
+): Promise<HTMLImageElement> {
+  await waitFor(() => {
+    expect(
+      container.querySelector(
+        "[data-testid='computer-use-screenshot-displayed']",
+      ),
+    ).not.toBeNull();
+  });
+  return container.querySelector<HTMLImageElement>(
+    "[data-testid='computer-use-screenshot-displayed']",
+  )!;
+}
 
 /**
  * Drives a `vellum://` link click through the mocked markdown renderer. The
@@ -410,6 +427,7 @@ function surfaceBlock(surfaceId: string): ConversationContentBlock {
 }
 
 afterAll(() => {
+  globalThis.Image.prototype.decode = realImageDecode;
   mock.restore();
 });
 afterEach(() => {
@@ -1735,7 +1753,7 @@ describe("TranscriptMessageBody", () => {
     ).toBeNull();
   });
 
-  test("pins only the group that owns the selected computer-use screenshot", () => {
+  test("pins only the group that owns the selected computer-use screenshot", async () => {
     const first: ChatMessageToolCall = {
       id: "cu-earlier",
       name: "computer_use_screenshot",
@@ -1768,9 +1786,7 @@ describe("TranscriptMessageBody", () => {
       />,
     );
 
-    expect(
-      container.querySelectorAll("[data-testid='tool-result-image']"),
-    ).toHaveLength(1);
+    await waitForComputerUseScreenshot(container);
     expect(
       container.querySelectorAll("[data-testid='tool-progress-card']"),
     ).toHaveLength(1);
@@ -1781,7 +1797,9 @@ describe("TranscriptMessageBody", () => {
       container.querySelectorAll("[data-testid='tool-progress-card']"),
     ).toHaveLength(2);
     expect(
-      container.querySelectorAll("[data-testid='tool-result-image']"),
+      container.querySelectorAll(
+        "[data-testid='computer-use-screenshot-displayed']",
+      ),
     ).toHaveLength(1);
 
     expect(
@@ -1791,7 +1809,7 @@ describe("TranscriptMessageBody", () => {
     ).toBe("cu-earlier");
   });
 
-  test("keeps a pending earlier screenshot call pinned after another screenshot wins", () => {
+  test("keeps a pending earlier screenshot call pinned after another screenshot wins", async () => {
     const pending: ChatMessageToolCall = {
       id: "cu-pending",
       name: "computer_use_screenshot",
@@ -1836,9 +1854,7 @@ describe("TranscriptMessageBody", () => {
         .querySelectorAll("[data-testid='tool-progress-card']")[0]
         ?.getAttribute("data-tool-call-ids"),
     ).toBe("cu-pending");
-    expect(
-      container.querySelectorAll("[data-testid='tool-result-image']"),
-    ).toHaveLength(1);
+    await waitForComputerUseScreenshot(container);
   });
 
   test("opens the one disclosure above the pinned rows it cannot swallow", () => {
@@ -2218,7 +2234,7 @@ describe("TranscriptMessageBody", () => {
     expect(images[1]!.getAttribute("src")).toBe("data:image/png;base64,img-b");
   });
 
-  test("renders only the final screenshot-bearing computer-use occurrence", () => {
+  test("renders only the final screenshot-bearing computer-use occurrence", async () => {
     const calls: ChatMessageToolCall[] = [
       {
         id: "cu-first",
@@ -2261,16 +2277,11 @@ describe("TranscriptMessageBody", () => {
       />,
     );
 
-    const images = container.querySelectorAll(
-      "[data-testid='tool-result-image']",
-    );
-    expect(images).toHaveLength(1);
-    expect(images[0]!.getAttribute("src")).toBe(
-      "data:image/png;base64,selected",
-    );
+    const image = await waitForComputerUseScreenshot(container);
+    expect(image.getAttribute("src")).toBe("data:image/png;base64,selected");
   });
 
-  test("keeps the latest screenshot when later calls have no screenshot or ordinary images", () => {
+  test("keeps the latest screenshot when later calls have no screenshot or ordinary images", async () => {
     const selected: ChatMessageToolCall = {
       id: "cu-selected",
       name: "computer_use_screenshot",
@@ -2310,9 +2321,12 @@ describe("TranscriptMessageBody", () => {
       />,
     );
 
+    await waitForComputerUseScreenshot(container);
     expect(
       Array.from(
-        container.querySelectorAll("[data-testid='tool-result-image']"),
+        container.querySelectorAll(
+          "[data-testid='computer-use-screenshot-displayed'], [data-testid='tool-result-image']",
+        ),
       ).map((image) => image.getAttribute("src")),
     ).toEqual([
       "data:image/png;base64,selected",
@@ -2320,7 +2334,7 @@ describe("TranscriptMessageBody", () => {
     ]);
   });
 
-  test("filters only automatic screenshots from the assistant strip and keeps Files canonical", () => {
+  test("filters only automatic screenshots from the assistant strip and keeps Files canonical", async () => {
     const screenshot: ChatMessageToolCall = {
       id: "cu-selected",
       name: "computer_use_screenshot",
@@ -2365,12 +2379,10 @@ describe("TranscriptMessageBody", () => {
     expect(strip?.getAttribute("data-panel-attachment-ids")).toBe(
       "automatic-shot,report",
     );
-    expect(
-      container.querySelectorAll("[data-testid='tool-result-image']"),
-    ).toHaveLength(1);
+    await waitForComputerUseScreenshot(container);
   });
 
-  test("mounts Files access when every canonical overflow attachment is filtered", () => {
+  test("mounts Files access when every canonical overflow attachment is filtered", async () => {
     const screenshot: ChatMessageToolCall = {
       id: "cu-selected",
       name: "computer_use_screenshot",
@@ -2407,9 +2419,7 @@ describe("TranscriptMessageBody", () => {
     expect(strip?.getAttribute("data-panel-attachment-ids")).toBe(
       attachments.map((attachment) => attachment.id).join(","),
     );
-    expect(
-      container.querySelectorAll("[data-testid='tool-result-image']"),
-    ).toHaveLength(1);
+    await waitForComputerUseScreenshot(container);
   });
 
   test("retains an automatic screenshot attachment when no tool image exists", () => {
@@ -2453,7 +2463,7 @@ describe("TranscriptMessageBody", () => {
     ).toBeNull();
   });
 
-  test("uses content-block call order instead of a redundant flat call array", () => {
+  test("uses content-block call order instead of a redundant flat call array", async () => {
     const blockCall: ChatMessageToolCall = {
       id: "block-call",
       name: "computer_use_screenshot",
@@ -2479,13 +2489,11 @@ describe("TranscriptMessageBody", () => {
     );
 
     expect(
-      container
-        .querySelector("[data-testid='tool-result-image']")
-        ?.getAttribute("src"),
+      (await waitForComputerUseScreenshot(container)).getAttribute("src"),
     ).toBe("data:image/png;base64,block-image");
   });
 
-  test("selects from content blocks when the flat tool-call array is absent", () => {
+  test("selects from content blocks when the flat tool-call array is absent", async () => {
     const blockCall: ChatMessageToolCall = {
       id: "block-only-call",
       name: "computer_use_screenshot",
@@ -2507,13 +2515,11 @@ describe("TranscriptMessageBody", () => {
     );
 
     expect(
-      container
-        .querySelector("[data-testid='tool-result-image']")
-        ?.getAttribute("src"),
+      (await waitForComputerUseScreenshot(container)).getAttribute("src"),
     ).toBe("data:image/png;base64,block-only-image");
   });
 
-  test("keeps one screenshot across inline completion and referenced history", () => {
+  test("keeps one screenshot across inline completion and referenced history", async () => {
     const inline: ChatMessageToolCall = {
       id: "cu-transition",
       name: "computer_use_screenshot",
@@ -2559,21 +2565,77 @@ describe("TranscriptMessageBody", () => {
     );
     const { container, rerender } = render(row(inline, false));
 
-    expect(
-      container.querySelectorAll("[data-testid='tool-result-image']"),
-    ).toHaveLength(1);
+    const displayed = await waitForComputerUseScreenshot(container);
     rerender(row(referenced, true));
 
-    expect(
-      container.querySelectorAll(
-        "[data-testid='tool-result-image'], [data-testid='tool-result-image-placeholder']",
-      ),
-    ).toHaveLength(1);
+    expect(await waitForComputerUseScreenshot(container)).toBe(displayed);
     const strip = container.querySelector("[data-testid='attachments']");
     expect(strip?.getAttribute("data-visible-attachment-ids")).toBe("");
     expect(strip?.getAttribute("data-panel-attachment-ids")).toBe(
       "history-shot",
     );
+  });
+
+  test("keeps the previous screenshot when prose moves the latest image to another group", async () => {
+    const first: ChatMessageToolCall = {
+      id: "cu-first-group",
+      name: "computer_use_screenshot",
+      input: { activity: "Opening the dashboard" },
+      imageDataList: ["first-group"],
+    };
+    const next: ChatMessageToolCall = {
+      id: "cu-next-group",
+      name: "computer_use_screenshot",
+      input: { activity: "Checking the dashboard" },
+      imageDataList: ["next-group"],
+    };
+    const row = (showNext: boolean) => (
+      <TranscriptMessageBody
+        message={{
+          id: "computer-use-group-transition",
+          role: "assistant",
+          contentBlocks: showNext
+            ? [
+                toolUseBlock(first),
+                textBlock("I opened the dashboard."),
+                toolUseBlock(next),
+              ]
+            : [toolUseBlock(first)],
+          toolCalls: showNext ? [first, next] : [first],
+        }}
+        onSurfaceAction={noop}
+      />
+    );
+    const { container, rerender } = render(row(false));
+    await waitForComputerUseScreenshot(container);
+
+    let resolveNext!: () => void;
+    globalThis.Image.prototype.decode = function () {
+      return this.src.endsWith("next-group")
+        ? new Promise<void>((resolve) => {
+            resolveNext = resolve;
+          })
+        : Promise.resolve();
+    };
+    try {
+      rerender(row(true));
+
+      expect(
+        (await waitForComputerUseScreenshot(container)).getAttribute("src"),
+      ).toBe("data:image/png;base64,first-group");
+      expect(screen.getByText("Updating screenshot...")).toBeTruthy();
+
+      await act(async () => resolveNext());
+      await waitFor(() =>
+        expect(
+          container
+            .querySelector("[data-testid='computer-use-screenshot-displayed']")
+            ?.getAttribute("src"),
+        ).toBe("data:image/png;base64,next-group"),
+      );
+    } finally {
+      globalThis.Image.prototype.decode = async () => {};
+    }
   });
 
   test("infers non-png MIME types for assistant tool-result images", () => {

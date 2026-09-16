@@ -4,6 +4,10 @@ import { useCallback, useMemo } from "react";
 
 import { AttachmentDownloadOverlay } from "@/domains/chat/components/chat-attachments/attachment-download-overlay";
 import { AttachmentPreviewBox } from "@/domains/chat/components/chat-attachments/attachment-preview-box";
+import {
+  ComputerUseScreenshotPreview,
+  type ComputerUseScreenshotTransition,
+} from "@/domains/chat/components/chat-attachments/computer-use-screenshot-preview";
 import { downloadAttachment } from "@/domains/chat/components/chat-attachments/download-attachment";
 import { estimateBase64Bytes } from "@/utils/attachment-utils";
 import { useAttachmentObjectUrl } from "@/domains/chat/components/chat-attachments/use-attachment-object-url";
@@ -180,6 +184,8 @@ function toolResultImageInputs(toolCall: ChatMessageToolCall): {
 export interface ToolResultImage extends DisplayAttachment {
   /** Stable across a mid-turn removal and unique within the strip. */
   stripKey: string;
+  /** Stable for one produced image across inline-to-reference hydration. */
+  occurrenceKey: string;
   /** Producing tool-call occurrence, stable across inline-to-reference swaps. */
   toolCallId: string;
 }
@@ -225,6 +231,7 @@ export function projectToolResultImages(
       attachments.push({
         id: attachmentId,
         stripKey: `tool-ref:${tc.id}:${localIndex}`,
+        occurrenceKey: `${tc.id}:${localIndex}`,
         toolCallId: tc.id,
         filename: nameFor("png"),
         mimeType: "image/png",
@@ -241,6 +248,7 @@ export function projectToolResultImages(
       attachments.push({
         id: syntheticId,
         stripKey: syntheticId,
+        occurrenceKey: `${tc.id}:${localIndex}`,
         toolCallId: tc.id,
         filename: nameFor(ext),
         mimeType,
@@ -426,6 +434,8 @@ interface ToolResultImagesProps {
    *  {@link embeddedImageFileNames}. An embedded image is presented there. */
   embeddedImageNames?: ReadonlySet<string>;
   assistantId?: string | null;
+  /** Message-scoped transition used only by the selected computer-use image. */
+  computerUseScreenshotTransition?: ComputerUseScreenshotTransition;
 }
 
 /**
@@ -443,6 +453,7 @@ export const ToolResultImages: FC<ToolResultImagesProps> = ({
   messageAttachments,
   embeddedImageNames,
   assistantId,
+  computerUseScreenshotTransition,
 }) => {
   const attachments = useMemo(
     () =>
@@ -479,34 +490,51 @@ export const ToolResultImages: FC<ToolResultImagesProps> = ({
   return (
     <>
       <div className="flex w-full flex-wrap gap-2">
-        {attachments.map((att, index) => (
-          <div
-            key={att.stripKey}
-            role="button"
-            aria-label={att.filename}
-            title={att.filename}
-            tabIndex={0}
-            onClick={() => openPreview(att, index)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                openPreview(att, index);
-              }
-            }}
-            data-reveal-row=""
-            className="group relative w-fit cursor-pointer"
-          >
-            <ToolResultImageThumb attachment={att} assistantId={assistantId} />
-            <AttachmentDownloadOverlay
-              filename={att.filename}
-              onDownload={(e: MouseEvent<HTMLButtonElement>) => {
-                e.stopPropagation();
-                handleDownload(att);
+        {attachments.map((att, index) => {
+          if (
+            computerUseScreenshotTransition?.targetOccurrenceKey ===
+            att.occurrenceKey
+          ) {
+            return (
+              <ComputerUseScreenshotPreview
+                key={att.occurrenceKey}
+                assistantId={assistantId}
+                transition={computerUseScreenshotTransition}
+              />
+            );
+          }
+          return (
+            <div
+              key={att.stripKey}
+              role="button"
+              aria-label={att.filename}
+              title={att.filename}
+              tabIndex={0}
+              onClick={() => openPreview(att, index)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === " ") {
+                  e.preventDefault();
+                  openPreview(att, index);
+                }
               }}
-              className="rounded-md"
-            />
-          </div>
-        ))}
+              data-reveal-row=""
+              className="group relative w-fit cursor-pointer"
+            >
+              <ToolResultImageThumb
+                attachment={att}
+                assistantId={assistantId}
+              />
+              <AttachmentDownloadOverlay
+                filename={att.filename}
+                onDownload={(e: MouseEvent<HTMLButtonElement>) => {
+                  e.stopPropagation();
+                  handleDownload(att);
+                }}
+                className="rounded-md"
+              />
+            </div>
+          );
+        })}
       </div>
       {previewModal}
     </>

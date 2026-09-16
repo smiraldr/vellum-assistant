@@ -402,10 +402,13 @@ describe("projectToolResultImages", () => {
       imageAttachmentIds: ["att-1"],
     };
 
-    expect(projectToolResultImages([inline])[0]?.toolCallId).toBe("tc-inline");
-    expect(projectToolResultImages([referenced])[0]?.toolCallId).toBe(
-      "tc-inline",
-    );
+    const inlineImage = projectToolResultImages([inline])[0];
+    const referencedImage = projectToolResultImages([referenced])[0];
+
+    expect(inlineImage?.toolCallId).toBe("tc-inline");
+    expect(referencedImage?.toolCallId).toBe("tc-inline");
+    expect(inlineImage?.occurrenceKey).toBe("tc-inline:1");
+    expect(referencedImage?.occurrenceKey).toBe(inlineImage?.occurrenceKey);
   });
 
   test("retains raw images before markdown and reply-attachment suppression", () => {

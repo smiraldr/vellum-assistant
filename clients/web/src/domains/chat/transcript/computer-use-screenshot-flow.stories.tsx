@@ -1,6 +1,6 @@
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { Meta, StoryObj } from "@storybook/react-vite";
-import { expect, userEvent, within } from "storybook/test";
+import { expect, userEvent, waitFor, within } from "storybook/test";
 
 import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
 import { ActivityStepsPanel } from "@/domains/chat/components/activity-steps-panel";
@@ -172,6 +172,77 @@ export const StreamingLatestOnly: Story = {
       ],
       [first, second, streamingLatest],
     ),
+  },
+};
+
+const smoothInitial = screenshotCall(
+  "cu-smooth-initial",
+  "Opening the example dashboard",
+  0,
+);
+const smoothNext = screenshotCall(
+  "cu-smooth-next",
+  "Reviewing the updated dashboard",
+  4,
+);
+
+function SmoothReplacementStory() {
+  const [showNext, setShowNext] = useState(false);
+  const calls = showNext ? [smoothInitial, smoothNext] : [smoothInitial];
+  const contentBlocks: DisplayMessage["contentBlocks"] = showNext
+    ? [
+        { type: "tool_use", toolCall: smoothInitial },
+        { type: "text", text: "I opened the dashboard." },
+        { type: "tool_use", toolCall: smoothNext },
+      ]
+    : [{ type: "tool_use", toolCall: smoothInitial }];
+
+  return (
+    <div className="flex flex-col gap-3 p-4">
+      <button
+        type="button"
+        className="w-fit rounded-md border border-[var(--border-base)] px-3 py-1.5 text-body-small-emphasised"
+        onClick={() => setShowNext(true)}
+      >
+        Show next screenshot
+      </button>
+      <ScreenshotFlowStory
+        streaming
+        message={storyMessage(
+          "smooth-screenshot-replacement",
+          contentBlocks,
+          calls,
+        )}
+      />
+    </div>
+  );
+}
+
+/** A new screenshot keeps the decoded frame stable while its new activity group becomes ready. */
+export const SmoothLiveReplacement: Story = {
+  args: {
+    message: storyMessage(
+      "smooth-screenshot-replacement",
+      [{ type: "tool_use", toolCall: smoothInitial }],
+      [smoothInitial],
+    ),
+  },
+  render: () => <SmoothReplacementStory />,
+  play: async ({ canvasElement }) => {
+    const canvas = within(canvasElement);
+    await expect(
+      await canvas.findByTestId("computer-use-screenshot-displayed"),
+    ).toHaveAttribute("src", SAMPLE_PREVIEWS[0]);
+
+    await userEvent.click(
+      canvas.getByRole("button", { name: "Show next screenshot" }),
+    );
+
+    await waitFor(() =>
+      expect(
+        canvas.getByTestId("computer-use-screenshot-displayed"),
+      ).toHaveAttribute("src", SAMPLE_PREVIEWS[4]),
+    );
   },
 };
 

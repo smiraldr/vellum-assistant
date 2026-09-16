@@ -72,6 +72,11 @@
     "thinkingTitle": "Thinking",
     "viewThinkingAria": "View thinking"
   },
+  "computerUseScreenshotPreview": {
+    "unavailable": "Latest screenshot unavailable.",
+    "unavailableShowingPrevious": "Latest screenshot unavailable. Showing previous screenshot.",
+    "updating": "Updating screenshot..."
+  },
   "addToChatSheet": {
     "camera": "Camera",
     "closeAriaLabel": "Close",
