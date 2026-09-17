@@ -106,7 +106,14 @@ function FieldValue({ field }: { field: ValueField }) {
     case "table":
       return (
         <div className="mt-1 flex min-w-0 flex-col gap-2">
-          <DataTable {...tableProps(field)} />
+          <DataTable
+            {...tableProps(field)}
+            renderCell={(text) => (
+              <MachineText className="whitespace-pre-wrap [overflow-wrap:anywhere]">
+                {text}
+              </MachineText>
+            )}
+          />
           {field.more > 0 && <MoreInRawInput count={field.more} />}
         </div>
       );

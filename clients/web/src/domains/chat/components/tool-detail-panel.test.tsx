@@ -218,6 +218,11 @@ describe("ToolDetailPanel", () => {
     ]);
     // The record without an owner keeps its row, with that cell empty.
     expect(second && cellsOf(second)).toEqual(["grace@example.com", "new", ""]);
+    // A cell is a machine value, set in the same monospace as the other values.
+    const firstCell = first && within(first).getAllByRole("cell")[0];
+    expect(firstCell?.querySelector(".font-mono")?.textContent).toBe(
+      "ada@example.com",
+    );
     // No positional labels: the records are rows, not a numbered group.
     expect(queryByText("1")).toBeNull();
   });
