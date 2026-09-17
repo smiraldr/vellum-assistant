@@ -2036,20 +2036,6 @@ export async function composeInjectorChain(ctx: TurnContext): Promise<string> {
 const DEFAULT_PLACEMENT: InjectionPlacement = "append-user-tail";
 
 /**
- * Count leading memory-prefix blocks on a user message's `content`.
- *
- * Delegates to {@link countMemoryPrefixBlocks} from
- * `memory/graph/conversation-graph-memory.js` — the canonical state-machine
- * for locating the memory-prefix boundary. Reusing it here keeps the
- * PKB-context / PKB-reminder / NOW splice rules aligned on a single source
- * of truth so their ordering relative to any memory prefix is stable and
- * testable.
- */
-function countMemoryPrefixBlocksOnContent(content: ContentBlock[]): number {
-  return countMemoryPrefixBlocks(content);
-}
-
-/**
  * Apply one injector block to a `runMessages` array according to its
  * declared {@link InjectionPlacement}:
  *  - `"prepend-user-tail"` — prepend to the tail user message's content.
@@ -2101,9 +2087,7 @@ function applyInjectionBlock(
         { ...userTail, content: [...userTail.content, textBlock] },
       ];
     case "after-memory-prefix": {
-      const memoryPrefixCount = countMemoryPrefixBlocksOnContent(
-        userTail.content,
-      );
+      const memoryPrefixCount = countMemoryPrefixBlocks(userTail.content);
       return [
         ...runMessages.slice(0, -1),
         {
@@ -2161,7 +2145,7 @@ function stripTailV2DynamicMemoryPrefix(
   if (!last || last.role !== "user") {
     return messages;
   }
-  const prefixCount = countMemoryPrefixBlocksOnContent(last.content);
+  const prefixCount = countMemoryPrefixBlocks(last.content);
   if (prefixCount === 0) {
     return messages;
   }
