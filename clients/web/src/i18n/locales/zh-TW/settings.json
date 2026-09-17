@@ -862,6 +862,8 @@
     "modelAriaLabel": "圖片生成模型",
     "modelUpdateFailedToast": "更新圖片生成模型失敗。請再試一次。",
     "openaiApiKeyPlaceholder": "輸入您的 OpenAI API 金鑰",
+    "openrouterApiKeyPlaceholder": "輸入您的 OpenRouter API 金鑰",
+    "openrouterModelPlaceholder": "google/gemini-3.1-flash-image-preview",
     "providerAriaLabel": "圖片生成供應商",
     "providerLabel": "供應商",
     "savedToast": "圖片生成設定已儲存。",

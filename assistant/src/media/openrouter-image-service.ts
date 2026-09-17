@@ -1,4 +1,9 @@
 import {
+  DEFAULT_OPENROUTER_IMAGE_MODEL,
+  qualifyImageModelForOpenRouter,
+  resolveImageModel,
+} from "./image-models.js";
+import {
   type GeneratedImage,
   type ImageGenCredentials,
   type ImageGenerationRequest,
@@ -8,7 +13,21 @@ import {
 } from "./types.js";
 
 const OPENROUTER_IMAGES_URL = "https://openrouter.ai/api/v1/images";
-const DEFAULT_MODEL = "google/gemini-3.1-flash-image-preview";
+
+/**
+ * Qualify a bare built-in ID or alias for OpenRouter. Call sites that skip
+ * tool-level validation (app-icon, avatar) still reach this boundary.
+ */
+function resolveOpenRouterModel(model: string | undefined): string {
+  const trimmed = model?.trim();
+  if (!trimmed) {
+    return DEFAULT_OPENROUTER_IMAGE_MODEL;
+  }
+  if (resolveImageModel(trimmed)) {
+    return qualifyImageModelForOpenRouter(trimmed);
+  }
+  return trimmed;
+}
 
 const OPENROUTER_BILLING_MESSAGE =
   "Image generation is unavailable because the OpenRouter account or API key is out of credits. " +
@@ -82,7 +101,7 @@ export async function generateImageOpenRouter(
     throw new Error("OpenRouter image generation requires an OpenRouter API key.");
   }
 
-  const model = request.model?.trim() || DEFAULT_MODEL;
+  const model = resolveOpenRouterModel(request.model);
   const variants = Math.max(1, Math.min(request.variants ?? 1, MAX_VARIANTS));
   const inputReferences = request.sourceImages?.map((image) => ({
     type: "image_url" as const,

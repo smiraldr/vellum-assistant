@@ -16207,7 +16207,7 @@ paths:
     post:
       operationId: imagegeneration_generate_post
       summary: Generate or edit images using AI
-      description: Calls the configured image-generation provider (Gemini or OpenAI) to produce one or more images.
+      description: Calls the configured image-generation provider (Gemini, OpenAI, or OpenRouter) to produce one or more images.
       tags:
         - image-generation
       requestBody:

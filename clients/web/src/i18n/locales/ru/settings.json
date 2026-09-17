@@ -848,6 +848,8 @@
     "modelAriaLabel": "Модель генерации изображений",
     "modelUpdateFailedToast": "Не удалось обновить модель генерации изображений. Повторите попытку.",
     "openaiApiKeyPlaceholder": "API-ключ OpenAI",
+    "openrouterApiKeyPlaceholder": "API-ключ OpenRouter",
+    "openrouterModelPlaceholder": "google/gemini-3.1-flash-image-preview",
     "providerAriaLabel": "Провайдер генерации изображений",
     "providerLabel": "Провайдер",
     "savedToast": "Настройки генерации изображений сохранены.",

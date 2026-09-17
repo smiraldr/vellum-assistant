@@ -22,7 +22,7 @@ describe("generateImageOpenRouter", () => {
           { b64_json: "svg-data", media_type: "image/svg+xml" },
         ],
       });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     const result = await generateImageOpenRouter(
       { type: "direct", apiKey: "or-key" },
@@ -56,7 +56,7 @@ describe("generateImageOpenRouter", () => {
     globalThis.fetch = mock(async (_input, init) => {
       body = JSON.parse(String(init?.body)) as Record<string, unknown>;
       return Response.json({ data: [] });
-    }) as typeof fetch;
+    }) as unknown as typeof fetch;
 
     await generateImageOpenRouter(
       { type: "direct", apiKey: "or-key" },
@@ -75,13 +75,48 @@ describe("generateImageOpenRouter", () => {
     ]);
   });
 
+  test("qualifies a bare built-in model ID at the backend boundary", async () => {
+    let body: Record<string, unknown> | undefined;
+    globalThis.fetch = mock(async (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({ data: [] });
+    }) as unknown as typeof fetch;
+
+    const result = await generateImageOpenRouter(
+      { type: "direct", apiKey: "or-key" },
+      {
+        prompt: "a cat",
+        mode: "generate",
+        model: "gemini-3.1-flash-image-preview",
+      },
+    );
+
+    expect(body?.model).toBe("google/gemini-3.1-flash-image-preview");
+    expect(result.resolvedModel).toBe("google/gemini-3.1-flash-image-preview");
+  });
+
+  test("defaults an empty model to the OpenRouter Gemini Flash slug", async () => {
+    let body: Record<string, unknown> | undefined;
+    globalThis.fetch = mock(async (_input, init) => {
+      body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      return Response.json({ data: [] });
+    }) as unknown as typeof fetch;
+
+    await generateImageOpenRouter(
+      { type: "direct", apiKey: "or-key" },
+      { prompt: "a cat", mode: "generate" },
+    );
+
+    expect(body?.model).toBe("google/gemini-3.1-flash-image-preview");
+  });
+
   test("surfaces the provider's invalid-request message", async () => {
     globalThis.fetch = mock(async () =>
       Response.json(
         { error: { message: "Model does not support image output" } },
         { status: 400 },
       ),
-    ) as typeof fetch;
+    ) as unknown as typeof fetch;
 
     try {
       await generateImageOpenRouter(
