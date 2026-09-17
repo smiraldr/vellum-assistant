@@ -54,6 +54,8 @@ export interface ConnectionSummary {
   /** Set for MCP servers a plugin owns. Disconnecting removes that plugin. */
   pluginName?: string;
   serverId?: string;
+  /** Set for managed accounts: the platform connection this row stands for. */
+  accountId?: string;
   canReconnect: boolean;
 }
 
@@ -88,6 +90,15 @@ export interface ConnectPlanContext {
   platformGate: PlatformGateState;
   /** Bring-your-own OAuth apps only exist on self-hosted assistants. */
   ownOAuthAvailable: boolean;
+  /**
+   * Whether the MCP server list has actually been read. An installed plugin
+   * with no servers is a real state with a row of its own, but so is a server
+   * list that has not arrived or failed to load, and the two are the same
+   * empty array. Without this the second one renders as the first: a row that
+   * says the plugin declared nothing, offering to uninstall a plugin whose
+   * servers were only unavailable.
+   */
+  mcpServersLoaded: boolean;
 }
 
 export type ConnectableIntegrationItem = Exclude<
@@ -114,13 +125,17 @@ function mcpConnections(
   methodId: string,
   kind: ConnectMethodKind,
 ): ConnectionSummary[] {
+  // One server speaks for the whole integration, so it is named after it.
+  // Several have to be told apart, and the server's own id is the name the
+  // rest of the app already shows for it.
+  const several = method.servers.length > 1;
   return method.servers.map((server) => {
     const status = mcpConnectionStatus(server);
     return {
       id: `mcp:${server.id}`,
       methodId,
       methodKind: kind,
-      label: null,
+      label: several ? server.id : null,
       detail: integrationHostname(server),
       status,
       pluginName: server.pluginName,
@@ -134,6 +149,28 @@ function mcpConnections(
   });
 }
 
+/**
+ * An installed plugin that declared no MCP server still has to appear, or the
+ * only thing left to do with it (take it away again) has nowhere to live. It
+ * is the plugin itself that is connected here, not a server, so the row has
+ * no endpoint and nothing to sign in to.
+ */
+function installedWithoutServers(
+  definition: McpPluginDefinition,
+  methodId: string,
+  kind: ConnectMethodKind,
+): ConnectionSummary {
+  return {
+    id: `plugin:${definition.pluginName}`,
+    methodId,
+    methodKind: kind,
+    label: null,
+    status: "pending",
+    pluginName: definition.pluginName,
+    canReconnect: false,
+  };
+}
+
 function oauthConnections(
   connections: OAuthConnection[],
   methodId: string,
@@ -143,23 +180,31 @@ function oauthConnections(
     methodId,
     methodKind: "managed-oauth",
     label: connection.account_label,
+    accountId: connection.id,
     status: connection.connected ? "connected" : "needs-attention",
     canReconnect: !connection.connected,
   }));
 }
 
-function pluginMethod(method: McpPluginMethod): ConnectMethod {
+function pluginMethod(
+  method: McpPluginMethod,
+  mcpServersLoaded: boolean,
+): ConnectMethod {
   const { definition } = method;
   const kind: ConnectMethodKind =
     definition.setup.mode === "manual" ? "mcp-manual" : "mcp-oauth";
   const id = `mcp:${definition.pluginName}`;
+  const declaredNothing =
+    mcpServersLoaded && method.servers.length === 0 && definition.installed;
   return {
     id,
     kind,
     availability: "available",
     instructions: definition.setup.instructions,
     setupGuideUrl: definition.documentationUrl,
-    connections: mcpConnections(method, id, kind),
+    connections: declaredNothing
+      ? [installedWithoutServers(definition, id, kind)]
+      : mcpConnections(method, id, kind),
     plugin: definition,
   };
 }
@@ -191,7 +236,7 @@ export function buildConnectPlan(
     logoUrl = item.provider.logo_url;
     description = item.provider.description;
     for (const method of item.methods) {
-      methods.push(pluginMethod(method));
+      methods.push(pluginMethod(method, context.mcpServersLoaded));
     }
     if (context.platformGate !== "gated") {
       const managedId = `managed:${item.provider.provider_key}`;
@@ -217,7 +262,7 @@ export function buildConnectPlan(
     iconKey = definition.pluginName;
     logoUrl = definition.logo || null;
     description = definition.description;
-    methods.push(pluginMethod(item.method));
+    methods.push(pluginMethod(item.method, context.mcpServersLoaded));
   }
 
   const [primary, ...alternatives] = methods;

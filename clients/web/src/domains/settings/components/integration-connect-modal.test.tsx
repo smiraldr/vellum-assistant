@@ -21,6 +21,7 @@ const handlers = {
   onRetryAttempt: mock(() => {}),
   onReconnect: mock(() => {}),
   onDisconnect: mock(() => {}),
+  onOpenTools: mock(() => {}),
   onCopyCallbackUrl: mock(() => {}),
   onOpenSetupGuide: mock(() => {}),
   onClose: mock(() => {}),
@@ -41,6 +42,9 @@ const manualPlan = planFor({
     }),
   ],
 });
+
+/** Vellum's hosted sign-in and nothing else, the shape a host is asked for. */
+const hostedOnlyPlan = planFor({ providers: [NOTION_PROVIDER] });
 
 /** Notion over both its MCP server and a Vellum-hosted account. */
 const connectedPlan = planFor({
@@ -181,6 +185,54 @@ describe("IntegrationConnectModal", () => {
     ).toBeNull();
   });
 
+  test("names a sibling server by its own id", async () => {
+    const twoServers = planFor({
+      servers: [
+        mcpServer("ashby-mcp", { id: "ashby-jobs" }),
+        mcpServer("ashby-mcp", { id: "ashby-candidates" }),
+      ],
+      definitions: [
+        pluginDefinition({
+          pluginName: "ashby-mcp",
+          displayName: "Ashby",
+          description: "Search candidates and jobs in Ashby.",
+          oauthProvider: undefined,
+        }),
+      ],
+    });
+    modal({ plan: twoServers });
+
+    // Siblings are told apart by their own ids, not by one shared label.
+    openMenu("More actions for ashby-jobs");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
+
+    await screen.findByText("Remove ashby-jobs?");
+    screen.getByText("Are you sure?");
+  });
+
+  test("keeps a row for an installed plugin that declared no server", async () => {
+    const noServers = planFor({
+      definitions: [
+        pluginDefinition({
+          pluginName: "ashby-mcp",
+          displayName: "Ashby",
+          description: "Search candidates and jobs in Ashby.",
+          oauthProvider: undefined,
+          installed: {},
+        }),
+      ],
+    });
+    modal({ plan: noServers });
+
+    // With no server of its own the row is named after the method, and it is
+    // still the row that takes the plugin away.
+    openMenu("More actions for Ashby MCP server");
+    fireEvent.click(await screen.findByRole("menuitem", { name: "Remove" }));
+
+    await screen.findByText("Remove Ashby MCP server?");
+    screen.getByText("Are you sure?");
+  });
+
   test("puts an MCP server's tools behind the row they belong to", async () => {
     modal({
       plan: connectedPlan,
@@ -209,7 +261,81 @@ describe("IntegrationConnectModal", () => {
     );
 
     await screen.findByText("https://mcp.example.com/notion-mcp");
+    expect(handlers.onOpenTools).toHaveBeenCalledTimes(1);
     fireEvent.click(screen.getByRole("button", { name: "search_pages" }));
     screen.getByText("Full-text search across the workspace.");
+  });
+
+  test("says the tools are on their way, and when they never came", async () => {
+    const { rerender } = modal({
+      plan: connectedPlan,
+      toolsByConnectionId: { "mcp:notion": { loading: true } },
+    });
+
+    openMenu("More actions for Notion MCP server");
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Tools and details" }),
+    );
+    await screen.findByRole("status");
+    screen.getByText("Loading tools...");
+
+    rerender(
+      <IntegrationConnectModal
+        {...handlers}
+        plan={connectedPlan}
+        toolsByConnectionId={{ "mcp:notion": { error: true } }}
+      />,
+    );
+    await screen.findByRole("alert");
+    screen.getByText("The tool list could not be loaded.");
+  });
+
+  test("connect another leads back out to a method", async () => {
+    modal({ plan: connectedPlan });
+
+    openMenu("Connect another");
+    fireEvent.click(
+      await screen.findByRole("menuitem", { name: "Sign in through Vellum" }),
+    );
+
+    await screen.findByRole("heading", { name: "Connect Notion" });
+    fireEvent.click(screen.getByRole("button", { name: "Connect" }));
+    expect(handlers.onConnect).toHaveBeenCalledTimes(1);
+  });
+
+  test("asks a per-tenant provider which host before it will connect", () => {
+    modal({
+      plan: hostedOnlyPlan,
+      tenantHost: {
+        pattern: "^[a-z0-9-]+\\.example\\.com$",
+        label: "Store domain",
+        placeholder: "store.example.com",
+      },
+    });
+
+    const connect = screen.getByRole("button", {
+      name: "Connect",
+    }) as HTMLButtonElement;
+    expect(connect.disabled).toBe(true);
+
+    fireEvent.change(screen.getByLabelText("Store domain"), {
+      target: { value: "shop.example.com" },
+    });
+    expect(connect.disabled).toBe(false);
+    fireEvent.click(connect);
+    expect(handlers.onConnect).toHaveBeenCalledWith(
+      hostedOnlyPlan.primary,
+      expect.objectContaining({ tenantHost: "shop.example.com" }),
+    );
+  });
+
+  test("falls back to the connect view when nothing is connected any more", () => {
+    const { rerender } = modal({ plan: connectedPlan });
+    screen.getByText("Manage how Vellum connects to Notion.");
+
+    rerender(
+      <IntegrationConnectModal {...handlers} plan={notionPlan} />,
+    );
+    screen.getByRole("heading", { name: "Connect Notion" });
   });
 });

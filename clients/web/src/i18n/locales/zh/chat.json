@@ -61,6 +61,9 @@
     "takingLonger": "您的助手响应时间超出预期。",
     "tryAgain": "重试"
   },
+  "mobileDetailSheet": {
+    "title": "活动详情"
+  },
   "activityStepsPanel": {
     "backAria": "返回所有步骤",
     "backTooltip": "所有步骤",
@@ -1606,6 +1609,8 @@
     "submitFailed": "提交密钥失败。请重试。"
   },
   "secretPromptCard": {
+    "showValue": "显示值",
+    "hideValue": "隐藏值",
     "cancel": "取消",
     "domains": "域：{list}",
     "placeholder": "输入密钥值...",
