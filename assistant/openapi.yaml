@@ -3,7 +3,7 @@
 openapi: 3.1.0
 info:
   title: Vellum Assistant API
-  version: 0.12.1
+  version: 0.12.2
   description: Auto-generated OpenAPI specification for the Vellum Assistant runtime HTTP server.
 servers:
   - url: http://127.0.0.1:7821
@@ -16556,7 +16556,8 @@ paths:
             type: string
           description:
             "Filter by provider id. One of: anthropic, openai, gemini, ollama, fireworks, together, openrouter,
-            vercel-ai-gateway, litellm, opencode, openai-compatible, minimax, atlascloud, baseten, poolside, vellum"
+            vercel-ai-gateway, litellm, opencode, openai-compatible, minimax, atlascloud, baseten, poolside, jev,
+            vellum"
       responses:
         "200":
           description: Successful response
@@ -16828,8 +16829,8 @@ paths:
             type: string
           description:
             "Filter by provider. One of: anthropic, openai, gemini, ollama, fireworks, together, openrouter,
-            vercel-ai-gateway, litellm, opencode, openai-compatible, minimax, atlascloud, baseten, poolside, vellum,
-            chatgpt"
+            vercel-ai-gateway, litellm, opencode, openai-compatible, minimax, atlascloud, baseten, poolside, jev,
+            vellum, chatgpt"
       responses:
         "200":
           description: Successful response
@@ -21359,6 +21360,9 @@ paths:
                                             additionalProperties: false
                                         freeTextPlaceholder:
                                           type: string
+                                        presentation:
+                                          type: string
+                                          const: virtual_desktop
                                       required:
                                         - id
                                         - question
@@ -21401,6 +21405,9 @@ paths:
                                             additionalProperties: false
                                         freeTextPlaceholder:
                                           type: string
+                                        presentation:
+                                          type: string
+                                          const: virtual_desktop
                                       required:
                                         - id
                                         - question
@@ -21870,6 +21877,9 @@ paths:
                                                     additionalProperties: false
                                                 freeTextPlaceholder:
                                                   type: string
+                                                presentation:
+                                                  type: string
+                                                  const: virtual_desktop
                                               required:
                                                 - id
                                                 - question
@@ -21912,6 +21922,9 @@ paths:
                                                     additionalProperties: false
                                                 freeTextPlaceholder:
                                                   type: string
+                                                presentation:
+                                                  type: string
+                                                  const: virtual_desktop
                                               required:
                                                 - id
                                                 - question
@@ -25982,6 +25995,9 @@ paths:
                                     additionalProperties: false
                                 freeTextPlaceholder:
                                   type: string
+                                presentation:
+                                  type: string
+                                  const: virtual_desktop
                               required:
                                 - id
                                 - question
@@ -38639,6 +38655,7 @@ components:
         - atlascloud
         - baseten
         - poolside
+        - jev
         - vellum
         - chatgpt
     Auth:

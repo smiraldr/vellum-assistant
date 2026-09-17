@@ -77,6 +77,7 @@ import type { MessageQueue } from "./conversation-queue-manager.js";
 import type { SlackInboundMessageMetadata } from "./handlers/shared.js";
 import type { UserMessageAttachment } from "./message-protocol.js";
 import type { ConversationTransportMetadata } from "./message-types/conversations.js";
+import { bestEffortModeSessionTracking } from "./mode-session-tracking.js";
 import {
   assembleUserContentBlocks,
   offloadLinkPlan,
@@ -1454,21 +1455,23 @@ export async function persistQueuedMessageBody(
 
     const activeSurfaceId =
       options.activeSurfaceId ?? ctx.currentActiveSurfaceId;
-    ctx.modeSessions?.acceptTurn(
-      requestId,
-      activeSurfaceId
-        ? { kind: "surface", responseId: activeSurfaceId }
-        : undefined,
-    );
-    ctx.modeSessions?.trackPersistedRow(
-      requestId,
-      persistedUserMessage.id,
-      persistedUserMessage.createdAt,
-      {
-        startsDisplayBoundary: false,
-        publishMessagesChanged: options.publishModeSessionChanges ?? true,
-      },
-    );
+    bestEffortModeSessionTracking("persist_user_message", () => {
+      ctx.modeSessions?.acceptTurn(
+        requestId,
+        activeSurfaceId
+          ? { kind: "surface", responseId: activeSurfaceId }
+          : undefined,
+      );
+      ctx.modeSessions?.trackPersistedRow(
+        requestId,
+        persistedUserMessage.id,
+        persistedUserMessage.createdAt,
+        {
+          startsDisplayBoundary: false,
+          publishMessagesChanged: options.publishModeSessionChanges ?? true,
+        },
+      );
+    });
 
     if (turnCtx) {
       setConversationOriginChannelIfUnset(

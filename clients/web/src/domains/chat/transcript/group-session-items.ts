@@ -27,6 +27,30 @@ export interface SessionGroupSegment {
   containsLastBoundary: boolean;
 }
 
+export type SessionGroupIdentity = Pick<
+  SessionGroupSegment,
+  "key" | "modeSession" | "rawMemberMessageIds" | "memberMessageIds"
+>;
+
+function sameIds(left: readonly string[], right: readonly string[]): boolean {
+  return (
+    left.length === right.length &&
+    left.every((id, index) => id === right[index])
+  );
+}
+
+export function sameSessionGroupIdentity(
+  left: SessionGroupIdentity,
+  right: SessionGroupIdentity,
+): boolean {
+  return (
+    left.key === right.key &&
+    sameModeSession(left.modeSession, right.modeSession) &&
+    sameIds(left.rawMemberMessageIds, right.rawMemberMessageIds) &&
+    sameIds(left.memberMessageIds, right.memberMessageIds)
+  );
+}
+
 export type SessionGroupedTranscriptItem = TranscriptItem | SessionGroupSegment;
 
 export interface SessionMemberActivityBounds {
@@ -40,7 +64,7 @@ export interface GroupSessionItemsInput {
   summariesById: ReadonlyMap<string, ModeSessionSummary>;
   getModeSession: (message: DisplayMessage) => ModeSession | null | undefined;
   getActivityBounds?: (message: DisplayMessage) => SessionMemberActivityBounds;
-  previousSegments?: readonly SessionGroupSegment[];
+  previousSegments?: readonly SessionGroupIdentity[];
   claimedPreviousKeys?: Set<string>;
 }
 
@@ -171,8 +195,14 @@ function createSegment(
     modeSession: first.modeSession,
     summary: first.summary,
     items,
-    rawMemberMessageIds,
-    memberMessageIds,
+    rawMemberMessageIds:
+      previous && sameIds(previous.rawMemberMessageIds, rawMemberMessageIds)
+        ? previous.rawMemberMessageIds
+        : rawMemberMessageIds,
+    memberMessageIds:
+      previous && sameIds(previous.memberMessageIds, memberMessageIds)
+        ? previous.memberMessageIds
+        : memberMessageIds,
     ...activity,
     containsFirstBoundary: items.some((item) =>
       messageItemHasIdentity(item, first.summary.firstIncludedMessageId),

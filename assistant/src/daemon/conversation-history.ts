@@ -17,6 +17,7 @@ import { getSummaryFromContextMessage } from "../plugins/defaults/compaction/win
 import type { ContentBlock, Message } from "../providers/types.js";
 import { getLogger } from "../util/logger.js";
 import type { ConversationModeSessionCoordinator } from "./conversation-mode-session.js";
+import { bestEffortModeSessionTracking } from "./mode-session-tracking.js";
 import { startsNewTurn } from "./summarize-boundary.js";
 
 const log = getLogger("conversation-history");
@@ -382,7 +383,9 @@ export function undo(conversation: HistoryConversationContext): number {
     return 0;
   }
 
-  conversation.modeSessions.invalidateAllStructuralWaits();
+  bestEffortModeSessionTracking("conversation wait invalidation", () =>
+    conversation.modeSessions.invalidateAllStructuralWaits(),
+  );
 
   const removed = conversation.messages.length - lastUserIdx;
   conversation.messages = conversation.messages.slice(0, lastUserIdx);

@@ -415,6 +415,56 @@ describe("useTranscriptScroll — load-older burst regression", () => {
     expect(onLoadOlderCalls).toBe(2);
   });
 
+  test.each([false, true])(
+    "text updates do not scan rendered ids (groups=%s)",
+    (sessionGroupsEnabled) => {
+      const scrollEl = createScrollElement({
+        scrollTop: 0,
+        scrollHeight: 400,
+        clientHeight: 800,
+      });
+      let scans = 0;
+      let loads = 0;
+      const transcriptRef = {
+        current: {
+          scrollToLatest: () => {},
+          getScrollElement: () => scrollEl,
+          getRenderedMessageIds: () => {
+            scans += 1;
+            return ["m1"];
+          },
+        },
+      };
+      const args: UseTranscriptScrollArgs = {
+        transcriptRef: transcriptRef as any,
+        sessionGroupsEnabled,
+        items: [makeMessageItem("m1")],
+        conversationId: "c1",
+        hasMore: true,
+        isLoadingOlder: false,
+        onLoadOlder: () => {
+          loads += 1;
+        },
+      };
+      const { rerender } = renderHook(
+        (props: UseTranscriptScrollArgs) => useTranscriptScroll(props),
+        { initialProps: args },
+      );
+      const initialScans = scans;
+      for (let i = 0; i < 10; i += 1) {
+        rerender({ ...args, items: [makeMessageItem("m1")] });
+      }
+      expect(scans).toBe(initialScans);
+      expect(scans).toBe(sessionGroupsEnabled ? 1 : 0);
+      rerender({ ...args, isLoadingOlder: true });
+      rerender({ ...args, items: [makeMessageItem("m0"), ...args.items] });
+      expect(loads).toBe(sessionGroupsEnabled ? 1 : 2);
+      if (!sessionGroupsEnabled) {
+        expect(scans).toBe(0);
+      }
+    },
+  );
+
   test("does not chain-load when a prepended page adds only unmounted messages", () => {
     let onLoadOlderCalls = 0;
     const scrollEl = createScrollElement({
@@ -439,6 +489,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
       {
         initialProps: {
           transcriptRef: transcriptRef as any,
+          sessionGroupsEnabled: true,
           items: initialItems,
           conversationId: "c1",
           hasMore: true,
@@ -450,6 +501,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
 
     rerender({
       transcriptRef: transcriptRef as any,
+      sessionGroupsEnabled: true,
       items: initialItems,
       conversationId: "c1",
       hasMore: true,
@@ -458,6 +510,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
     });
     rerender({
       transcriptRef: transcriptRef as any,
+      sessionGroupsEnabled: true,
       items: [makeMessageItem("hidden-old"), ...initialItems],
       conversationId: "c1",
       hasMore: true,
@@ -486,6 +539,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
     const initialItems = [makeMessageItem("m1")];
     const args: UseTranscriptScrollArgs = {
       transcriptRef: transcriptRef as any,
+      sessionGroupsEnabled: true,
       items: initialItems,
       conversationId: "c1",
       hasMore: false,
@@ -549,6 +603,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
       const initialItems = [makeMessageItem("m1")];
       const args: UseTranscriptScrollArgs = {
         transcriptRef: transcriptRef as any,
+        sessionGroupsEnabled: true,
         items: initialItems,
         conversationId: "c1",
         hasMore: false,
@@ -607,6 +662,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
       {
         initialProps: {
           transcriptRef: transcriptRef as any,
+          sessionGroupsEnabled: true,
           items: initialItems,
           conversationId: "c1",
           hasMore: false,
@@ -618,6 +674,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
 
     rerender({
       transcriptRef: transcriptRef as any,
+      sessionGroupsEnabled: true,
       items: initialItems,
       conversationId: "c1",
       hasMore: true,
@@ -630,6 +687,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
     });
     rerender({
       transcriptRef: transcriptRef as any,
+      sessionGroupsEnabled: true,
       items: initialItems,
       conversationId: "c1",
       hasMore: true,
@@ -639,6 +697,7 @@ describe("useTranscriptScroll — load-older burst regression", () => {
     (scrollEl as unknown as { scrollHeight: number }).scrollHeight = 2_100;
     rerender({
       transcriptRef: transcriptRef as any,
+      sessionGroupsEnabled: true,
       items: [makeMessageItem("m0"), ...initialItems],
       conversationId: "c1",
       hasMore: false,

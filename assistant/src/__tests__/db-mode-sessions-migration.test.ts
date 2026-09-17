@@ -6,7 +6,7 @@ import { drizzle } from "drizzle-orm/bun-sqlite";
 import {
   downCreateConversationModeSessions,
   migrateCreateConversationModeSessions,
-} from "../persistence/migrations/380-create-conversation-mode-sessions.js";
+} from "../persistence/migrations/381-create-conversation-mode-sessions.js";
 import * as schema from "../persistence/schema.js";
 
 function createPreMigrationDb() {

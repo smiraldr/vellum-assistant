@@ -370,12 +370,6 @@ export interface LiveVoiceSessionOptions {
    */
   resolveCredentialReadiness?: LiveVoiceCredentialReadinessResolver | null;
   startVoiceTurn?: LiveVoiceTurnStarter;
-  resolveModeSessions?: (
-    conversationId: string,
-  ) => ConversationModeSessionCoordinator | undefined;
-  prepareModeSessions?: (
-    conversationId: string,
-  ) => Promise<ConversationModeSessionCoordinator | undefined>;
   acquireModeSessionResidency?: (conversationId: string) => Promise<{
     coordinator: ConversationModeSessionCoordinator;
     release: () => void;
@@ -1219,12 +1213,6 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
   private readonly metrics: LiveVoiceMetricsCollector;
   private readonly createTurnId: () => string;
   private readonly conversationId: string;
-  private readonly resolveModeSessions?: (
-    conversationId: string,
-  ) => ConversationModeSessionCoordinator | undefined;
-  private readonly prepareModeSessions?: (
-    conversationId: string,
-  ) => Promise<ConversationModeSessionCoordinator | undefined>;
   private readonly acquireModeSessionResidency?: (
     conversationId: string,
   ) => Promise<{
@@ -1541,8 +1529,6 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
     this.createTurnId = options.createTurnId ?? randomUUID;
     this.conversationId =
       context.startFrame.conversationId ?? context.sessionId;
-    this.resolveModeSessions = options.resolveModeSessions;
-    this.prepareModeSessions = options.prepareModeSessions;
     this.acquireModeSessionResidency = options.acquireModeSessionResidency;
     this.liveActivityReporter =
       options.liveActivityReporter ??
@@ -1673,11 +1659,7 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       // is a property of the daemon and not of what this client asked for.
       // A client reading it back absent is talking to one that predates it.
       textInput: true,
-      ...(this.resolveModeSessions ||
-      this.prepareModeSessions ||
-      this.acquireModeSessionResidency
-        ? { sightSessions: true }
-        : {}),
+      ...(this.acquireModeSessionResidency ? { sightSessions: true } : {}),
       ...(this.audioInput ? {} : { audioInput: false }),
     });
   }
@@ -1960,42 +1942,24 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
     cameraEpoch: number,
     source: "live" | "ambient" | undefined,
   ): Promise<void> {
-    if (!this.cameraModeSessions) {
-      let coordinator = this.resolveModeSessions?.(this.conversationId);
-      let releaseResidency: (() => void) | undefined;
-      if (!coordinator && this.acquireModeSessionResidency) {
-        try {
-          const residency = await this.acquireModeSessionResidency(
-            this.conversationId,
-          );
-          if (this.isClosed || this.state === "failed") {
-            residency.release();
-            return;
-          }
-          coordinator = residency.coordinator;
-          releaseResidency = residency.release;
-        } catch (err) {
-          log.warn({ err, cameraEpoch }, "Could not prepare camera session");
+    let acquiredProducer = false;
+    if (!this.cameraModeSessions && this.acquireModeSessionResidency) {
+      try {
+        const residency = await this.acquireModeSessionResidency(
+          this.conversationId,
+        );
+        if (this.isClosed || this.state === "failed") {
+          residency.release();
+          return;
         }
-      }
-      if (!coordinator && this.prepareModeSessions) {
-        try {
-          coordinator = await this.prepareModeSessions(this.conversationId);
-        } catch (err) {
-          log.warn({ err, cameraEpoch }, "Could not prepare camera session");
-        }
-      }
-      if (this.isClosed || this.state === "failed") {
-        return;
-      }
-      if (coordinator) {
         this.cameraModeSessions = new CameraModeSessionProducer(
-          coordinator,
+          residency.coordinator,
           this.context.sessionId,
         );
-        this.releaseModeSessionResidency = releaseResidency;
-      } else {
-        releaseResidency?.();
+        this.releaseModeSessionResidency = residency.release;
+        acquiredProducer = true;
+      } catch (err) {
+        log.warn({ err, cameraEpoch }, "Could not prepare camera session");
       }
     }
     let handle: ModeSessionSourceHandle | undefined;
@@ -2003,6 +1967,12 @@ export class LiveVoiceSession implements LiveVoiceSessionContract {
       handle = this.cameraModeSessions?.start(cameraEpoch, source ?? "live");
     } catch (err) {
       log.warn({ err, cameraEpoch }, "Could not start camera session");
+    }
+    if (!handle && acquiredProducer) {
+      this.cameraModeSessions = undefined;
+      const release = this.releaseModeSessionResidency;
+      this.releaseModeSessionResidency = undefined;
+      release?.();
     }
     if (handle || this.isClosed) {
       return;

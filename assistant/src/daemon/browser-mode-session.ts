@@ -5,6 +5,7 @@ import type {
   ModeSessionSourceHandle,
   ModeSessionTerminalDisposition,
 } from "./conversation-mode-session.js";
+import { claimModeSessionTurn } from "./mode-session-tracking.js";
 
 export type { BrowserOperationLifecycle } from "../browser/operations.js";
 
@@ -71,7 +72,12 @@ export class BrowserModeSessionProducer {
       if (!handle) {
         return undefined;
       }
-      const owner = this.#coordinator.claimTurn(input.turnId, handle, input.at);
+      const owner = claimModeSessionTurn(
+        this.#coordinator,
+        input.turnId,
+        handle,
+        input.at,
+      );
       if (!owner || owner.id !== handle.id) {
         return undefined;
       }
@@ -96,7 +102,12 @@ export class BrowserModeSessionProducer {
     if (!handle) {
       return undefined;
     }
-    const owner = this.#coordinator.claimTurn(input.turnId, handle, input.at);
+    const owner = claimModeSessionTurn(
+      this.#coordinator,
+      input.turnId,
+      handle,
+      input.at,
+    );
     if (!owner) {
       return undefined;
     }
@@ -164,10 +175,12 @@ export class BrowserModeSessionProducer {
     handle: ModeSessionSourceHandle,
     disposition: ModeSessionTerminalDisposition,
   ): boolean {
-    const retired = this.#coordinator.retireSource(handle, disposition);
-    if (retired && this.#isCurrent(handle)) {
-      this.#activeHandle = undefined;
+    try {
+      return this.#coordinator.retireSource(handle, disposition);
+    } finally {
+      if (this.#isCurrent(handle)) {
+        this.#activeHandle = undefined;
+      }
     }
-    return retired;
   }
 }

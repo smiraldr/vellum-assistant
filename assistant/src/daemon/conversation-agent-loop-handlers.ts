@@ -152,6 +152,7 @@ import type {
   WebSearchMetadata,
   WebSearchResultItem,
 } from "./message-types/web-activity.js";
+import { bestEffortModeSessionTracking } from "./mode-session-tracking.js";
 import { referenceMediaBlocksForPersist } from "./persist-media-references.js";
 import { buildProviderRejectionLogFields } from "./provider-rejection-log-fields.js";
 import { turnOrRestingTrust } from "./trust-context-types.js";
@@ -1656,10 +1657,12 @@ export async function handleLlmCallStarted(
     metadata,
   );
   state.lastAssistantMessageId = reservedRow.id;
-  deps.ctx.modeSessions.trackPersistedRow(
-    deps.reqId,
-    reservedRow.id,
-    reservedRow.createdAt,
+  bestEffortModeSessionTracking("assistant row reservation", () =>
+    deps.ctx.modeSessions.trackPersistedRow(
+      deps.reqId,
+      reservedRow.id,
+      reservedRow.createdAt,
+    ),
   );
   state.assistantRowAwaitingFinalization = true;
   // Fresh row → fresh accumulator. If an earlier (failed) LLM call
@@ -2228,12 +2231,19 @@ async function persistPendingToolResultRow(
     deps.ctx.conversationId,
     buildToolResultMetadata(deps),
   );
-  const row = getMessageById(rowId, deps.ctx.conversationId);
-  if (row) {
-    deps.ctx.modeSessions.trackPersistedRow(deps.reqId, rowId, row.createdAt, {
-      startsDisplayBoundary: false,
-    });
-  }
+  bestEffortModeSessionTracking("tool result persistence", () => {
+    const row = getMessageById(rowId, deps.ctx.conversationId);
+    if (row) {
+      deps.ctx.modeSessions.trackPersistedRow(
+        deps.reqId,
+        rowId,
+        row.createdAt,
+        {
+          startsDisplayBoundary: false,
+        },
+      );
+    }
+  });
   // Snapshot the batch after the reservation resolves so the last of the
   // concurrent writers reflects the fullest batch. On-arrival writes go to
   // the in-flight delta file; the finalize seam folds the row inline.
@@ -3196,18 +3206,20 @@ export async function handleMessageComplete(
     deps.rlog,
   );
   if (toolResultRowId) {
-    const toolResultRow = getMessageById(
-      toolResultRowId,
-      deps.ctx.conversationId,
-    );
-    if (toolResultRow) {
-      deps.ctx.modeSessions.trackPersistedRow(
-        deps.reqId,
+    bestEffortModeSessionTracking("tool result finalization", () => {
+      const toolResultRow = getMessageById(
         toolResultRowId,
-        toolResultRow.createdAt,
-        { startsDisplayBoundary: false },
+        deps.ctx.conversationId,
       );
-    }
+      if (toolResultRow) {
+        deps.ctx.modeSessions.trackPersistedRow(
+          deps.reqId,
+          toolResultRowId,
+          toolResultRow.createdAt,
+          { startsDisplayBoundary: false },
+        );
+      }
+    });
   }
 
   // Accumulate directives + warnings from the assistant content for

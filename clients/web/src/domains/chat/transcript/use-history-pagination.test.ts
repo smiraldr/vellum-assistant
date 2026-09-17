@@ -1,12 +1,17 @@
 import { describe, expect, test } from "bun:test";
-import { renderHook } from "@testing-library/react";
+import { act, renderHook } from "@testing-library/react";
+import { createElement, type PropsWithChildren } from "react";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 import {
   activeModeSessionIdsForRefresh,
   aggregateBackgroundToolCompletions,
   aggregateModeSessionDescriptors,
   aggregateSubagentNotifications,
-  useAcceptedModeSessionDescriptors,
+  conversationHistoryQueryKey,
+  reconcileHistoryModeSessions,
+  useHistoryPagination,
+  type HistoryCache,
   modeSessionIdsForRefresh,
 } from "@/domains/chat/transcript/use-history-pagination";
 import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
@@ -149,42 +154,9 @@ describe("aggregateBackgroundToolCompletions", () => {
 });
 
 describe("mode session descriptor aggregation", () => {
-  test("keeps a stable empty result while history pages are loading", () => {
-    const { result, rerender } = renderHook(
-      ({ conversationId, pages }) =>
-        useAcceptedModeSessionDescriptors(conversationId, pages),
-      {
-        initialProps: {
-          conversationId: "conv-1" as string | null,
-          pages: undefined as PaginatedHistoryResult[] | undefined,
-        },
-      },
-    );
-    const initial = result.current;
-
-    rerender({ conversationId: "conv-1", pages: [] });
-
-    expect(result.current).toBe(initial);
-    expect(result.current).toEqual([]);
-  });
-
-  test("skips descriptor aggregation while the feature is disabled", () => {
-    const pages = [page(undefined, undefined, [descriptor("session-a", 1)])];
-    const { result, rerender } = renderHook(
-      ({ enabled }) =>
-        useAcceptedModeSessionDescriptors("conv-1", pages, enabled),
-      { initialProps: { enabled: false } },
-    );
-    const disabled = result.current;
-
-    rerender({ enabled: false });
-    expect(result.current).toBe(disabled);
-    expect(result.current).toEqual([]);
-
-    rerender({ enabled: true });
-    expect(result.current.map(({ summary }) => summary.id)).toEqual([
-      "session-a",
-    ]);
+  test("keeps an empty result while history pages are loading", () => {
+    expect(aggregateModeSessionDescriptors(undefined)).toEqual([]);
+    expect(aggregateModeSessionDescriptors([])).toEqual([]);
   });
 
   test("keeps the newest revision while preserving independent page content", () => {
@@ -203,55 +175,128 @@ describe("mode session descriptor aggregation", () => {
     );
   });
 
-  test("keeps a previously accepted newer descriptor across a stale response", () => {
-    const accepted = descriptor("session-a", 2);
-    const previous = [accepted];
-    const result = aggregateModeSessionDescriptors(
-      [page(undefined, undefined, [descriptor("session-a", 1)])],
-      previous,
-    );
+  test("cache reconciliation retains newer revisions and accepts independent content", () => {
+    const accepted = descriptor("session-a", 3, "completed");
+    const previous: HistoryCache = {
+      pages: [page(undefined, undefined, [accepted])],
+      pageParams: [null],
+    };
+    const message = {
+      id: "reply-2",
+      role: "assistant" as const,
+      content: "New reply",
+      modeSession: { id: "session-a", mode: "computer_use" as const },
+    };
+    const incoming: HistoryCache = {
+      pages: [
+        page(
+          undefined,
+          undefined,
+          [descriptor("session-a", 1), descriptor("session-b", 1)],
+          [message],
+        ),
+      ],
+      pageParams: [null],
+    };
+    const result = reconcileHistoryModeSessions(previous, incoming);
 
-    expect(result).toBe(previous);
-    expect(result[0]).toBe(accepted);
+    expect(result.pages[0]?.modeSessions?.[0]).toBe(accepted);
+    expect(result.pages[0]?.modeSessions?.[1]?.summary.id).toBe("session-b");
+    expect(result.pages[0]?.messages).toEqual([message]);
+    expect(reconcileHistoryModeSessions(result, structuredClone(result))).toBe(
+      result,
+    );
   });
 
-  test("reuses equal revisions while accepting independent descriptors", () => {
-    const accepted = descriptor("session-a", 2);
-    const next = aggregateModeSessionDescriptors(
-      [
-        page(undefined, undefined, [
-          descriptor("session-a", 2),
-          descriptor("session-b", 1),
-        ]),
-      ],
-      [accepted],
-    );
+  test("authoritative omission removes unavailable descriptors without removing message stamps", () => {
+    const previous: HistoryCache = {
+      pages: [page(undefined, undefined, [descriptor("session-a", 3)])],
+      pageParams: [null],
+    };
+    const message = {
+      id: "reply-1",
+      role: "assistant" as const,
+      modeSession: { id: "session-a", mode: "computer_use" as const },
+    };
+    const incoming: HistoryCache = {
+      pages: [page(undefined, undefined, [], [message])],
+      pageParams: [null],
+    };
+    const result = reconcileHistoryModeSessions(previous, incoming);
 
-    expect(next[0]).toBe(accepted);
-    expect(next[1]?.summary.id).toBe("session-b");
+    expect(aggregateModeSessionDescriptors(result.pages)).toEqual([]);
+    expect(result.pages[0]?.messages[0]?.modeSession).toEqual(
+      message.modeSession,
+    );
   });
 
-  test("retains needed prior descriptors and drops absent settled records", () => {
-    const active = descriptor("session-active", 2);
-    const represented = descriptor("session-represented", 2, "completed");
-    const absent = descriptor("session-absent", 2, "completed");
-    const result = aggregateModeSessionDescriptors(
-      [
-        page(undefined, undefined, undefined, [
-          {
-            id: "message-1",
-            role: "assistant",
-            modeSession: {
-              mode: "computer_use",
-              id: "session-represented",
-            },
-          },
-        ]),
-      ],
-      [active, represented, absent],
-    );
+  test("cache ownership survives remount, stale pages, and flag-off rendering", async () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, gcTime: Infinity } },
+    });
+    const queryKey = conversationHistoryQueryKey("assistant-1", "conv-1");
+    const accepted = descriptor("session-a", 3, "completed");
+    queryClient.setQueryData<HistoryCache>(queryKey, {
+      pages: [page(undefined, undefined, [accepted])],
+      pageParams: [null],
+    });
+    const wrapper = ({ children }: PropsWithChildren) =>
+      createElement(QueryClientProvider, { client: queryClient }, children);
+    const mount = (sessionGroupsEnabled: boolean) =>
+      renderHook(
+        ({ conversationId }) =>
+          useHistoryPagination({
+            assistantId: "assistant-1",
+            conversationId,
+            enabled: false,
+            sessionGroupsEnabled,
+          }),
+        { wrapper, initialProps: { conversationId: "conv-1" } },
+      );
+    const first = mount(true);
+    expect(first.result.current.modeSessions?.[0]).toBe(accepted);
+    first.unmount();
 
-    expect(result).toEqual([active, represented]);
+    const second = mount(true);
+    await act(async () => {
+      queryClient.setQueryData<HistoryCache>(queryKey, {
+        pages: [
+          page(undefined, undefined, [descriptor("session-a", 1)]),
+          page(undefined, undefined, [descriptor("session-b", 1)]),
+        ],
+        pageParams: [null, 1],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(second.result.current.modeSessions?.[0]).toBe(accepted);
+    expect(second.result.current.modeSessions?.[1]?.summary.id).toBe(
+      "session-b",
+    );
+    expect(
+      queryClient.getQueryData<HistoryCache>(queryKey)?.pages[0]
+        ?.modeSessions?.[0],
+    ).toBe(accepted);
+    second.unmount();
+
+    const disabled = mount(false);
+    expect(disabled.result.current.modeSessions).toBeUndefined();
+    await act(async () => {
+      queryClient.setQueryData<HistoryCache>(queryKey, {
+        pages: [page(undefined, undefined, [descriptor("session-a", 1)])],
+        pageParams: [null],
+      });
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    });
+    expect(disabled.result.current.modeSessions).toBeUndefined();
+    disabled.unmount();
+    const third = mount(true);
+    expect(third.result.current.modeSessions?.[0]).toBe(accepted);
+    third.rerender({ conversationId: "conv-2" });
+    expect(third.result.current.modeSessions).toEqual([]);
+    third.rerender({ conversationId: "conv-1" });
+    expect(third.result.current.modeSessions?.[0]).toBe(accepted);
+    third.unmount();
+    queryClient.clear();
   });
 
   test("refreshes only bounded active ids from all loaded pages", () => {

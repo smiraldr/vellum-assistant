@@ -276,7 +276,7 @@ export function mergeToolResultsIntoAssistantMessages(
     if (realUserContent.length > 0) {
       result.push({ ...msg, content: otherBlocks });
     }
-    if (!canMerge || realUserContent.length > 0) {
+    if (!canMerge) {
       lastAssistantIdx = -1;
     }
     // else: tool-result-only → suppressed

@@ -1096,6 +1096,7 @@ export function ChatMainPanel({
   // Scroll coordination
   // -------------------------------------------------------------------------
   const scrollCoordinator = useTranscriptScroll({
+    sessionGroupsEnabled,
     isVisible: !(isMobile && documentRoute.showingDocument),
     transcriptRef,
     items: transcriptItems,
@@ -1621,6 +1622,7 @@ export function ChatMainPanel({
           />
         ) : undefined
       }
+      onViewConversation={documentRoute.viewConversation}
       documentPresentation={
         documentRoute.showingDocument ? "document" : "conversation"
       }

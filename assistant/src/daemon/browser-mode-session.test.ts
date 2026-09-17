@@ -78,6 +78,38 @@ describe("BrowserModeSessionProducer", () => {
     setOverridesForTesting({});
   });
 
+  test.each([false, true])(
+    "retires failed admission while preserving a partial turn owner (%s)",
+    (partial) => {
+      const state = createCoordinator();
+      const claim = state.coordinator.claimTurn;
+      state.coordinator.claimTurn = (...args) => {
+        if (partial) {
+          claim(...args);
+        }
+        throw new Error("tracking unavailable");
+      };
+      const producer = new BrowserModeSessionProducer(state.coordinator);
+      expect(() =>
+        producer.beginOperation({
+          turnId: "turn-123",
+          lifecycle: "action",
+          at: 100,
+        }),
+      ).toThrow("tracking unavailable");
+      expect(state.retired).toHaveLength(1);
+      expect(state.retired[0]?.disposition).toMatchObject({
+        status: "interrupted",
+        endReason: "tracking_failed",
+      });
+      if (partial) {
+        expect(state.coordinator.getTurnOwner()).toBeDefined();
+      } else {
+        expect(state.coordinator.getTurnOwner()).toBeUndefined();
+      }
+    },
+  );
+
   test("admits new tracking only while the shared feature flag is enabled", () => {
     const state = createCoordinator();
     const producer = new BrowserModeSessionProducer(

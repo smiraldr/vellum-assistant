@@ -306,35 +306,22 @@ describe("Transcript", () => {
     expect(revealed).toHaveBeenCalledTimes(1);
   });
 
-  test("subscribes only intersecting active session headers to the clock", () => {
-    let observerCallback: IntersectionObserverCallback | undefined;
-    let observerRoot: Element | Document | null | undefined;
-    let activeObserverCount = 0;
-    const observedTargets: Element[] = [];
-    const originalIntersectionObserver = globalThis.IntersectionObserver;
+  test("shares one clock across mounted active headers without observing visibility", () => {
+    const originalObserver = globalThis.IntersectionObserver;
+    let observerCount = 0;
     globalThis.IntersectionObserver = class implements IntersectionObserver {
-      root: Element | Document | null;
+      root = null;
       rootMargin = "0px";
       thresholds = [0];
-      constructor(
-        callback: IntersectionObserverCallback,
-        options?: IntersectionObserverInit,
-      ) {
-        observerCallback = callback;
-        observerRoot = options?.root;
-        this.root = options?.root ?? null;
-        activeObserverCount += 1;
+      constructor() {
+        observerCount += 1;
       }
-      disconnect() {
-        activeObserverCount -= 1;
-      }
-      observe(target: Element) {
-        observedTargets.push(target);
-      }
+      disconnect() {}
+      observe() {}
+      unobserve() {}
       takeRecords() {
         return [];
       }
-      unobserve() {}
     };
     let tick: (() => void) | undefined;
     const interval = spyOn(globalThis, "setInterval").mockImplementation(((
@@ -350,111 +337,78 @@ describe("Transcript", () => {
     const dateNow = spyOn(Date, "now").mockImplementation(() => now);
     try {
       const first = assistantMessage("a-one", "First active reply");
-      const second = assistantMessage("a-two", "Second active reply");
-      const completed = assistantMessage("a-done", "Completed reply");
-      for (const [item, sessionId] of [
+      const second = assistantMessage("a-two", "Closed waiting reply");
+      for (const [item, id] of [
         [first, "session-1"],
         [second, "session-2"],
-        [completed, "session-done"],
       ] as const) {
         if (item.kind === "message") {
           item.message.timestamp = 2_000;
-          item.message.modeSession = { mode: "browser", id: sessionId };
+          item.message.modeSession = { mode: "browser", id };
         }
       }
-      const { getByTestId } = render(
+      const descriptors = [
+        activeDescriptor("session-1", "a-one"),
+        {
+          ...activeDescriptor("session-2", "a-two"),
+          runtimeState: "waiting" as const,
+        },
+      ];
+      const disclosure = {
+        ...openDisclosure,
+        isSessionOpen: (id: string) => id === "session-1",
+      };
+      const view = (items: TranscriptItem[]) => (
         <Transcript
-          items={[first, second, completed]}
+          items={items}
           conversationId="conv-1"
-          modeSessionDescriptors={[
-            activeDescriptor("session-1", "a-one"),
-            {
-              ...activeDescriptor("session-2", "a-two"),
-              runtimeState: "waiting",
-            },
-            completedDescriptor("session-done"),
-          ]}
+          modeSessionDescriptors={descriptors}
           sessionGroupsEnabled
-          sessionDisclosureState={openDisclosure}
+          sessionDisclosureState={disclosure}
           onSurfaceAction={noop}
-        />,
+        />
       );
-      expect(observerCallback).toBeDefined();
-      expect(observerRoot).toBe(getByTestId("transcript-scroll-container"));
-      expect(activeObserverCount).toBe(1);
-      expect(new Set(observedTargets).size).toBe(2);
-      const bodyRenders = markdownRenderCount;
-
-      act(() => {
-        observerCallback?.(
-          [
-            {
-              target: observedTargets[0],
-              isIntersecting: true,
-            } as IntersectionObserverEntry,
-            {
-              target: observedTargets[1],
-              isIntersecting: false,
-            } as IntersectionObserverEntry,
-          ],
-          {} as IntersectionObserver,
-        );
-      });
+      const { getByText, queryByText, getAllByRole, rerender, unmount } =
+        render(view([first, second]));
+      const headers = getAllByRole("button", { name: /Browser session/ });
+      expect(headers).toHaveLength(2);
+      expect(queryByText("Closed waiting reply")).toBeNull();
       expect(interval).toHaveBeenCalledTimes(1);
+      const bodyRenders = markdownRenderCount;
       now += 1_000;
       act(() => tick?.());
       expect(markdownRenderCount).toBe(bodyRenders);
-
-      act(() => {
-        observerCallback?.(
-          [
+      if (first.kind !== "message") {
+        throw new Error("Expected message fixture");
+      }
+      for (let i = 0; i < 10; i += 1) {
+        rerender(
+          view([
             {
-              target: observedTargets[0],
-              isIntersecting: false,
-            } as IntersectionObserverEntry,
-          ],
-          {} as IntersectionObserver,
+              ...first,
+              message: {
+                ...first.message,
+                ...textBody(`Stream ${i}`),
+              },
+            },
+            second,
+          ]),
         );
-      });
+        expect(getByText(`Stream ${i}`)).toBeTruthy();
+        expect(getAllByRole("button", { name: /Browser session/ })[0]).toBe(
+          headers[0],
+        );
+      }
+      expect(observerCount).toBe(0);
+      expect(interval).toHaveBeenCalledTimes(1);
+      unmount();
       expect(clear).toHaveBeenCalledTimes(1);
     } finally {
-      globalThis.IntersectionObserver = originalIntersectionObserver;
+      cleanup();
+      globalThis.IntersectionObserver = originalObserver;
       interval.mockRestore();
       clear.mockRestore();
       dateNow.mockRestore();
-    }
-  });
-
-  test("keeps active clocks eligible when IntersectionObserver is unavailable", () => {
-    const originalIntersectionObserver = globalThis.IntersectionObserver;
-    delete (
-      globalThis as { IntersectionObserver?: typeof IntersectionObserver }
-    ).IntersectionObserver;
-    const interval = spyOn(globalThis, "setInterval").mockImplementation(
-      (() =>
-        1 as unknown as ReturnType<
-          typeof setInterval
-        >) as unknown as typeof setInterval,
-    );
-    try {
-      const item = assistantMessage("a-one", "Active reply");
-      if (item.kind === "message") {
-        item.message.modeSession = { mode: "browser", id: "session-1" };
-      }
-      render(
-        <Transcript
-          items={[item]}
-          conversationId="conv-1"
-          modeSessionDescriptors={[activeDescriptor("session-1", "a-one")]}
-          sessionGroupsEnabled
-          sessionDisclosureState={openDisclosure}
-          onSurfaceAction={noop}
-        />,
-      );
-      expect(interval).toHaveBeenCalledTimes(1);
-    } finally {
-      globalThis.IntersectionObserver = originalIntersectionObserver;
-      interval.mockRestore();
     }
   });
 
@@ -593,7 +547,6 @@ describe("Transcript avatar slot", () => {
         items={items}
         conversationId={null}
         onSurfaceAction={noop}
-
         renderAvatar={() => <span>AVATAR_SLOT_MARKER</span>}
       />,
     );
@@ -615,7 +568,6 @@ describe("Transcript avatar slot", () => {
         items={items}
         conversationId={null}
         onSurfaceAction={noop}
-
         renderAvatar={() => <span>AVATAR_SLOT_MARKER</span>}
       />,
     );
@@ -656,7 +608,6 @@ describe("Transcript avatar slot", () => {
         items={[]}
         conversationId={null}
         onSurfaceAction={noop}
-
         renderAvatar={() => <span>AVATAR_SLOT_MARKER</span>}
       />,
     );
@@ -682,7 +633,6 @@ describe("Transcript avatar slot", () => {
         items={items}
         conversationId="conv-1"
         onSurfaceAction={noop}
-
         renderAvatar={() => <span>AVATAR_SLOT_MARKER</span>}
       />,
     );
@@ -702,7 +652,6 @@ describe("Transcript avatar slot", () => {
         items={items}
         conversationId="conv-1"
         onSurfaceAction={noop}
-
         renderAvatar={() => <span>AVATAR_SLOT_MARKER</span>}
       />,
     );
@@ -727,7 +676,6 @@ describe("Transcript avatar slot", () => {
         items={items}
         conversationId="conv-1"
         onSurfaceAction={noop}
-
         renderAvatar={() => <span>AVATAR_SLOT_MARKER</span>}
       />,
     );
@@ -755,7 +703,6 @@ describe("Transcript avatar slot", () => {
         items={items}
         conversationId="conv-1"
         onSurfaceAction={noop}
-
         renderAvatar={() => <span>AVATAR_SLOT_MARKER</span>}
       />,
     );
@@ -827,7 +774,6 @@ describe("Transcript no-anchor → anchor transition preserves avatar DOM identi
         items={historyOnly}
         conversationId="conv-1"
         onSurfaceAction={noop}
-
         renderAvatar={renderAvatar}
       />,
     );
@@ -846,7 +792,6 @@ describe("Transcript no-anchor → anchor transition preserves avatar DOM identi
           items={withAnchor}
           conversationId="conv-1"
           onSurfaceAction={noop}
-
           renderAvatar={renderAvatar}
         />,
       );
@@ -866,7 +811,6 @@ describe("Transcript no-anchor → anchor transition preserves avatar DOM identi
           items={historyOnly}
           conversationId="conv-1"
           onSurfaceAction={noop}
-
           renderAvatar={renderAvatar}
         />,
       );

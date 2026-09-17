@@ -5,7 +5,7 @@
  * point between the agent loop and the HostCuProxy.
  */
 
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, mock, spyOn, test } from "bun:test";
 
 import { isSessionGroupsEnabled } from "../config/session-groups-gate.js";
 import { ComputerUseModeSessionProducer } from "../daemon/computer-use-mode-session.js";
@@ -379,6 +379,43 @@ describe("surfaceProxyResolver — CU tool routing", () => {
       proxy.processObservation(sent.requestId, { executionResult: "clicked" });
       const result = await resultPromise;
       expect(result.isError).toBe(false);
+    });
+
+    test("dispatches once after tracking admission throws and still cleans up the task", async () => {
+      const ctx = setupProxy();
+      ctx.currentRequestId = "turn-123";
+      const recordAction = spyOn(
+        ctx.computerUseModeSessions,
+        "recordAction",
+      ).mockImplementation(() => {
+        throw new Error("tracking unavailable");
+      });
+      const endTask = spyOn(
+        ctx.computerUseModeSessions,
+        "endTask",
+      ).mockImplementation(() => {
+        throw new Error("tracking unavailable");
+      });
+      try {
+        const resultPromise = surfaceProxyResolver(ctx, "computer_use_click", {
+          element_id: 42,
+        });
+        expect(sentMessages).toHaveLength(1);
+        const sent = sentMessages[0] as { requestId: string };
+        proxy.processObservation(sent.requestId, {
+          executionResult: "clicked",
+        });
+        expect((await resultPromise).isError).toBe(false);
+        expect(recordAction).toHaveBeenCalledTimes(1);
+        expect(
+          (await surfaceProxyResolver(ctx, "computer_use_done", {})).isError,
+        ).toBe(false);
+        expect(endTask).toHaveBeenCalledTimes(1);
+        expect(proxy.stepCount).toBe(0);
+      } finally {
+        recordAction.mockRestore();
+        endTask.mockRestore();
+      }
     });
 
     test("computer_use_click routes through proxy and returns observation", async () => {

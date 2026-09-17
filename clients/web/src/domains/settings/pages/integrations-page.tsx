@@ -13,39 +13,56 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { useNavigate, useSearchParams } from "react-router";
+import { useLocation, useNavigate, useSearchParams } from "react-router";
 
 import { type Assistant, getAssistant } from "@/assistant/api";
 import { useActiveAssistantId } from "@/assistant/use-active-assistant-id";
 import { assistantsOauthConnectionsListOptions } from "@/generated/api/@tanstack/react-query.gen";
 import { oauthProvidersGetOptions } from "@/generated/daemon/@tanstack/react-query.gen";
+import { useOnboardingLogin } from "@/hooks/use-onboarding-login";
 import { usePlatformAssistantId } from "@/hooks/use-platform-assistant-id";
-import { usePlatformGate } from "@/hooks/use-platform-gate";
+import {
+  useActiveAssistantIsPlatformHosted,
+  usePlatformGate,
+} from "@/hooks/use-platform-gate";
+import { usePluginsList } from "@/hooks/use-plugins-list";
 import { useTranslation } from "@/i18n";
 import { captureError } from "@/lib/sentry/capture-error";
+import { openExternalUrl } from "@/runtime/browser";
 import { useAssistantFeatureFlagStore } from "@/stores/assistant-feature-flag-store";
 import { navigateToNewConversation } from "@/utils/conversation-navigation";
 import { routes } from "@/utils/routes";
 
+import { IntegrationConnectModal } from "../components/integration-connect-modal";
 import { IntegrationDetailModal } from "../components/integration-detail-modal";
+import { IntegrationMethodsModal } from "../components/integration-methods-modal";
 import { IntegrationRow } from "../components/integration-row";
+import { IntegrationTile } from "../components/integration-tile";
+import { ManagedConnectController } from "../components/managed-connect-controller";
+import { YourOwnTab } from "../components/your-own-oauth-tab";
+import { buildConnectPlan, type ConnectPlan } from "../connect-plan";
+import { useIntegrationConnect } from "../hooks/use-integration-connect";
 import {
   buildIntegrationItems,
   filterIntegrationItems,
   type IntegrationItem,
 } from "../integration-items";
 import { McpConnectionDialogs } from "../mcp/mcp-connection-dialogs";
+import { buildMcpPluginDefinitions } from "../mcp/mcp-plugin-definitions";
 import { McpServerCard } from "../mcp/mcp-server-card";
+import { PluginIntegrationRow } from "../mcp/plugin-integration-row";
 import { useMcpConnections } from "../mcp/use-mcp-connections";
 
 type SettingsTranslate = ReturnType<typeof useTranslation<"settings">>["t"];
 
-const CONFIGURED_GRID =
+/** Connected integrations, wide enough for a row's status and its actions. */
+export const CONFIGURED_GRID =
   "grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,22rem),1fr))]";
-const AVAILABLE_GRID =
+/** Everything still to connect, at the tile width the catalog is browsed in. */
+export const AVAILABLE_GRID =
   "grid gap-3 [grid-template-columns:repeat(auto-fill,minmax(min(100%,15rem),1fr))]";
 
-function IntegrationSection({
+export function IntegrationSection({
   title,
   count,
   gridClassName,
@@ -87,7 +104,9 @@ function IntegrationsPanelInner({ mcpAssistantId }: { mcpAssistantId: string }) 
   const { t } = useTranslation("settings");
   const [searchParams, setSearchParams] = useSearchParams();
   const navigate = useNavigate();
+  const location = useLocation();
   const platformGate = usePlatformGate();
+  const isPlatformHosted = useActiveAssistantIsPlatformHosted();
   const allowAdd = useAssistantFeatureFlagStore.use.mcpAddServer();
   const flagsHydrated = useAssistantFeatureFlagStore.use.hasHydrated();
   const [assistant, setAssistant] = useState<Assistant | null>(null);
@@ -97,8 +116,15 @@ function IntegrationsPanelInner({ mcpAssistantId }: { mcpAssistantId: string }) 
   const [selectedProviderKey, setSelectedProviderKey] = useState<string | null>(
     providerParam,
   );
+  const [selectedItemId, setSelectedItemId] = useState<string | null>(null);
   const previousProviderParam = useRef(providerParam);
   const mcp = useMcpConnections(mcpAssistantId);
+  const plugins = usePluginsList(mcpAssistantId);
+  const connect = useIntegrationConnect({
+    assistantId: mcpAssistantId,
+    mcp,
+    onOpenProviderDetail: setSelectedProviderKey,
+  });
 
   useEffect(() => {
     let active = true;
@@ -128,6 +154,13 @@ function IntegrationsPanelInner({ mcpAssistantId }: { mcpAssistantId: string }) 
     previousProviderParam.current = providerParam;
     setSelectedProviderKey(providerParam);
   }, [providerParam]);
+
+  // The same login PlatformLoginNotice offers, returning to this page with
+  // its query intact so a deep-linked provider survives the round trip.
+  const { login } = useOnboardingLogin(
+    `${location.pathname}${location.search}${location.hash}`,
+  );
+  const startLogin = useCallback(() => void login(), [login]);
 
   const closeProvider = useCallback(() => {
     setSelectedProviderKey(null);
@@ -199,25 +232,95 @@ function IntegrationsPanelInner({ mcpAssistantId }: { mcpAssistantId: string }) 
         oauthReady ? (providers.data ?? []) : [],
         oauthReady ? (connections.data ?? []) : [],
         mcp.list.data?.servers ?? [],
+        !plugins.installedLoaded
+          ? []
+          : buildMcpPluginDefinitions(
+              plugins.catalogMatches,
+              plugins.installedPlugins,
+            ),
       ),
-    [oauthReady, providers.data, connections.data, mcp.list.data],
+    [
+      oauthReady,
+      providers.data,
+      connections.data,
+      mcp.list.data,
+      plugins.installedLoaded,
+      plugins.catalogMatches,
+      plugins.installedPlugins,
+    ],
   );
   const items = useMemo(
     () => filterIntegrationItems(allItems, searchText),
     [allItems, searchText],
   );
-  const configuredItems = items.filter((item) => item.configured);
-  const availableItems = items.filter((item) => !item.configured);
+  // What is still to connect, plus whatever is being connected right now: a
+  // plugin counts as configured the moment it installs, and an integration
+  // must not change section while the user is watching its sign-in.
+  const connectingItemId = connect.attemptItemId;
+  const plans = useMemo(() => {
+    const byItemId = new Map<string, ConnectPlan>();
+    for (const item of allItems) {
+      if (item.kind === "mcp") {
+        continue;
+      }
+      if (item.configured && item.id !== connectingItemId) {
+        continue;
+      }
+      const plan = buildConnectPlan(item, {
+        platformGate,
+        ownOAuthAvailable: !isPlatformHosted,
+      });
+      if (plan) {
+        byItemId.set(item.id, plan);
+      }
+    }
+    return byItemId;
+  }, [allItems, connectingItemId, isPlatformHosted, platformGate]);
+  const isAvailable = (item: IntegrationItem) =>
+    !item.configured || plans.has(item.id);
+  const configuredItems = items.filter((item) => !isAvailable(item));
+  // Alphabetical, and nothing else. The shared sort puts what is configured
+  // first, which would jump the tile being connected to the head of the grid
+  // the moment its plugin installs.
+  const availableItems = items
+    .filter(isAvailable)
+    .sort(
+      (a, b) => a.name.localeCompare(b.name) || a.id.localeCompare(b.id),
+    );
   const selectedProvider = providers.data?.find(
     (provider) => provider.provider_key === selectedProviderKey,
   );
+  const selectedItem = allItems.find((item) => item.id === selectedItemId);
   const loading =
     assistantLoading ||
     providers.isLoading ||
     connections.isLoading ||
     platformAssistantIdLoading ||
-    mcp.list.isLoading;
-  const authBusy = mcp.auth.isBusy;
+    mcp.list.isLoading ||
+    ((plugins.isLoading || plugins.catalogLoading) && allItems.length === 0);
+  // One attempt at a time, on every surface: a managed authorization is just
+  // as exclusive as an MCP one, and the rows and cards that predate the tiles
+  // only knew about the MCP machine.
+  const authBusy = mcp.auth.isBusy || connect.managed !== null;
+  const oauthDisabled =
+    assistantLoading ||
+    !assistant ||
+    (platformGate === "full" && !platformAssistantId);
+  // The attempt is drawn inside the tile, or in the connect modal over it,
+  // only while that surface is on screen. A search that filters the owning
+  // integration out leaves the page-level notice as the one place with a
+  // progress line and a way to stop.
+  const inlineAttemptShown =
+    connect.ownsMcpAttempt &&
+    connectingItemId !== null &&
+    (connect.modal?.itemId === connectingItemId ||
+      items.some((item) => item.id === connectingItemId && plans.has(item.id)));
+  const connectModalItem = connect.modal
+    ? allItems.find((item) => item.id === connect.modal?.itemId)
+    : undefined;
+  const connectModalPlan = connectModalItem
+    ? plans.get(connectModalItem.id)
+    : undefined;
 
   const addCustom = () => {
     if (allowAdd) {
@@ -228,24 +331,58 @@ function IntegrationsPanelInner({ mcpAssistantId }: { mcpAssistantId: string }) 
   };
 
   const renderItem = (item: IntegrationItem) => {
+    const plan = item.kind === "mcp" ? undefined : plans.get(item.id);
+    if (item.kind !== "mcp" && plan) {
+      return (
+        <IntegrationTile
+          key={item.id}
+          plan={plan}
+          state={connect.stateFor(item.id, plan.name)}
+          // The choice between the provider's own server, Vellum's hosted
+          // sign-in, and your own OAuth app is only a real one on a
+          // self-hosted assistant.
+          showAlternatives={!isPlatformHosted}
+          disabled={
+            connect.isBusyElsewhere(item.id) ||
+            (plan.primary.kind === "managed-oauth" && oauthDisabled)
+          }
+          onConnect={(method) => connect.start(item, plan, method)}
+          onLogin={startLogin}
+          onCancel={connect.cancel}
+          onRetry={connect.retry}
+          onOpenSetupGuide={(url) => void openExternalUrl(url)}
+        />
+      );
+    }
     if (item.kind === "oauth") {
       return (
         <IntegrationRow
           key={item.id}
-          layout={item.configured ? "row" : "tile"}
           providerKey={item.provider.provider_key}
           displayName={item.name}
           description={item.provider.description}
           logoUrl={item.provider.logo_url}
           connections={item.connections}
-          disabled={
-            assistantLoading ||
-            !assistant ||
-            (platformGate === "full" && !platformAssistantId)
-          }
-          onConfigure={() =>
-            setSelectedProviderKey(item.provider.provider_key)
-          }
+          mcpMethods={item.methods}
+          disabled={oauthDisabled}
+          onConfigure={() => {
+            if (item.methods.length > 0) {
+              setSelectedItemId(item.id);
+            } else {
+              setSelectedProviderKey(item.provider.provider_key);
+            }
+          }}
+        />
+      );
+    }
+    if (item.kind === "plugin") {
+      return (
+        <PluginIntegrationRow
+          key={item.id}
+          assistantId={mcpAssistantId}
+          method={item.method}
+          disabled={authBusy}
+          onOpen={() => setSelectedItemId(item.id)}
         />
       );
     }
@@ -310,7 +447,26 @@ function IntegrationsPanelInner({ mcpAssistantId }: { mcpAssistantId: string }) 
           {t("integrationsPage.mcpUnavailable")}
         </Notice>
       ) : null}
-      <McpConnectionDialogs connections={mcp} allowAdd={allowAdd} />
+      {plugins.catalogError || plugins.isError ? (
+        <Notice tone="warning">
+          {t("integrationsPage.pluginCatalogUnavailable")}
+        </Notice>
+      ) : null}
+      <McpConnectionDialogs
+        connections={mcp}
+        allowAdd={allowAdd}
+        attemptReportedElsewhere={inlineAttemptShown}
+      />
+      {connect.managed && assistant ? (
+        <ManagedConnectController
+          key={connect.managed.providerKey}
+          assistantId={assistant.id}
+          providerKey={connect.managed.providerKey}
+          providerLabel={connect.managed.providerLabel}
+          restartToken={connect.managed.restartToken}
+          onReport={connect.onManagedReport}
+        />
+      ) : null}
 
       {loading ? (
         <div
@@ -365,6 +521,65 @@ function IntegrationsPanelInner({ mcpAssistantId }: { mcpAssistantId: string }) 
           platformGate={platformGate}
           tenantHost={selectedProvider.tenant_host}
           onClose={closeProvider}
+        />
+      ) : null}
+      {connect.modal &&
+      connectModalPlan &&
+      connectModalItem &&
+      connectModalItem.kind !== "mcp" ? (
+        <IntegrationConnectModal
+          plan={connectModalPlan}
+          focusMethodId={connect.modal.methodId}
+          attempt={connect.attemptFor(connectModalItem.id)}
+          ownOAuthContent={
+            assistant && connectModalItem.kind === "oauth" ? (
+              <YourOwnTab
+                assistantId={assistant.id}
+                providerKey={connectModalItem.provider.provider_key}
+                displayName={connectModalItem.name}
+                logoUrl={connectModalItem.provider.logo_url}
+              />
+            ) : null
+          }
+          onConnect={(method) =>
+            connect.run(connectModalItem, connectModalPlan, method)
+          }
+          onLogin={startLogin}
+          onCancelAttempt={connect.cancel}
+          onRetryAttempt={connect.retry}
+          onReconnect={(connection) => {
+            if (connection.serverId) {
+              mcp.auth.connect(
+                connection.serverId,
+                undefined,
+                connectModalPlan.name,
+              );
+            }
+          }}
+          onDisconnect={(connection) => {
+            if (connection.serverId) {
+              mcp.setRemoveServerId(connection.serverId);
+            }
+          }}
+          onOpenSetupGuide={(url) => void openExternalUrl(url)}
+          onClose={connect.closeModal}
+        />
+      ) : null}
+      {selectedItem && selectedItem.kind !== "mcp" ? (
+        <IntegrationMethodsModal
+          assistantId={mcpAssistantId}
+          item={selectedItem}
+          connections={mcp}
+          oauthDisabled={
+            assistantLoading ||
+            !assistant ||
+            (platformGate === "full" && !platformAssistantId)
+          }
+          onOAuth={(providerKey) => {
+            setSelectedItemId(null);
+            setSelectedProviderKey(providerKey);
+          }}
+          onClose={() => setSelectedItemId(null)}
         />
       ) : null}
     </div>

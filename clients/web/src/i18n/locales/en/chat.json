@@ -1670,8 +1670,6 @@
     "titleFallback": "Skill"
   },
   "skillExecuteDetail": {
-    "parameters": "Parameters",
-    "rawInput": "Raw input",
     "runningSuffix": " · running"
   },
   "skillLoadCard": {
@@ -1806,10 +1804,16 @@
     "command": "Command",
     "denied": "This tool call was not approved, so it did not run.",
     "emptyOutput": "The tool returned no output.",
-    "input": "Input",
     "output": "Output",
     "requestedChanges": "Requested changes",
     "running": "Running…"
+  },
+  "toolInputParameters": {
+    "parameters": "Parameters",
+    "rawInput": "Raw input"
+  },
+  "toolParamFields": {
+    "moreCount": "{count, plural, one {# more in Raw input} other {# more in Raw input}}"
   },
   "toolStepPill": {
     "openAria": "Open {label}",
@@ -2043,5 +2047,14 @@
     "savedTime": "Saved {time}",
     "pendingAria": "Camera frame, image still loading. {time}",
     "timeUnavailable": "Time unavailable"
+  },
+  "desktopHelpCard": {
+    "showPreview": "Show live preview",
+    "needsHelp": "The virtual desktop needs your help.",
+    "stepIn": "Step In",
+    "done": "Done",
+    "skip": "Skip",
+    "showMore": "Show more",
+    "showLess": "Show less"
   }
 }

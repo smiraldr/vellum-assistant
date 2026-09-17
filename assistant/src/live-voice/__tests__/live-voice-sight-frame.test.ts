@@ -58,6 +58,7 @@ import type {
 } from "../../stt/types.js";
 import {
   LiveVoiceSession,
+  type LiveVoiceSessionOptions,
   type LiveVoiceTurnStarter,
 } from "../live-voice-session.js";
 import type { LiveVoiceSessionFactoryContext } from "../live-voice-session-manager.js";
@@ -106,9 +107,9 @@ function createSessionHarness(
   title: string,
   options?: {
     acquireResidency?: boolean;
-    prepareModeSessions?: (
-      conversationId: string,
-    ) => Promise<Conversation["modeSessions"] | undefined>;
+    acquireModeSessionResidency?: NonNullable<
+      LiveVoiceSessionOptions["acquireModeSessionResidency"]
+    >;
     startVoiceTurn?: LiveVoiceTurnStarter;
   },
 ) {
@@ -162,16 +163,14 @@ function createSessionHarness(
     startVoiceTurn,
     createTurnId: () => "live-turn-1",
     emitMetrics: false,
-    ...(options?.acquireResidency
-      ? {
-          acquireModeSessionResidency: async () => ({
-            coordinator: activeConversation.modeSessions,
-            release: activeConversation.acquireLiveVoiceResidency(),
-          }),
-        }
-      : options?.prepareModeSessions
-        ? { prepareModeSessions: options.prepareModeSessions }
-        : { resolveModeSessions: () => activeConversation.modeSessions }),
+    acquireModeSessionResidency:
+      options?.acquireModeSessionResidency ??
+      (async () => ({
+        coordinator: activeConversation.modeSessions,
+        release: options?.acquireResidency
+          ? activeConversation.acquireLiveVoiceResidency()
+          : () => {},
+      })),
   });
 
   return {
@@ -553,7 +552,10 @@ describe("live-voice camera frames kept mid-call", () => {
       resolvePreparation = resolve;
     });
     const harness = createSessionHarness("Deferred sight end", {
-      prepareModeSessions: async () => preparation,
+      acquireModeSessionResidency: async () => ({
+        coordinator: await preparation,
+        release: () => {},
+      }),
     });
     try {
       await harness.session.start();
@@ -590,7 +592,10 @@ describe("live-voice camera frames kept mid-call", () => {
       resolvePreparation = resolve;
     });
     const harness = createSessionHarness("Deferred sight frame", {
-      prepareModeSessions: async () => preparation,
+      acquireModeSessionResidency: async () => ({
+        coordinator: await preparation,
+        release: () => {},
+      }),
     });
     try {
       await harness.session.start();
@@ -630,8 +635,13 @@ describe("live-voice camera frames kept mid-call", () => {
     const preparation = new Promise<Conversation["modeSessions"]>((resolve) => {
       resolvePreparation = resolve;
     });
+    const release = mock(() => {});
+    const acquire = mock(async () => ({
+      coordinator: await preparation,
+      release,
+    }));
     const harness = createSessionHarness("Deferred sight close", {
-      prepareModeSessions: async () => preparation,
+      acquireModeSessionResidency: acquire,
     });
     const activateSource = spyOn(
       harness.activeConversation.modeSessions,
@@ -644,12 +654,16 @@ describe("live-voice camera frames kept mid-call", () => {
         cameraEpoch: 23,
         source: "live",
       });
+      await waitFor(() => acquire.mock.calls.length === 1);
       const closing = harness.session.close("websocket_close");
 
       resolvePreparation(harness.activeConversation.modeSessions);
       await Promise.all([starting, closing]);
 
       expect(activateSource).not.toHaveBeenCalled();
+      expect(release).toHaveBeenCalledTimes(1);
+      await harness.session.close("client_end");
+      expect(release).toHaveBeenCalledTimes(1);
     } finally {
       activateSource.mockRestore();
       harness.dispose();
@@ -1050,67 +1064,173 @@ describe("live-voice camera frames kept mid-call", () => {
     }
   });
 
-  test("settles a stopped camera run when a frame ownership claim throws", async () => {
-    const harness = createSessionHarness("Sight frame ownership failure");
-    const coordinator = harness.activeConversation.modeSessions;
-    const originalClaimTurn = coordinator.claimTurn.bind(coordinator);
-    let failedSessionId: string | undefined;
-    const claimTurn = spyOn(coordinator, "claimTurn").mockImplementation(
-      (turnId, source, at) => {
-        const owner = originalClaimTurn(turnId, source, at);
-        if (!turnId.startsWith("live-voice-camera:")) {
-          failedSessionId = owner?.id;
-          throw new Error("session tracking unavailable");
-        }
-        return owner;
-      },
-    );
+  test("saves an admitted frame after stop while rejecting a frame delivered after stop", async () => {
+    const harness = createSessionHarness("Sight admitted frame drain", {
+      acquireResidency: true,
+    });
+    const processing = harness.activeConversation.acquireProcessing();
+    expect(processing).not.toBeNull();
     try {
       await harness.session.start();
       await harness.session.handleClientFrame({
         type: "sight_start",
-        cameraEpoch: 52,
-        source: "ambient",
+        cameraEpoch: 61,
+        source: "live",
       });
-      const attachmentId = await uploadFrame();
-      const keeping = harness.session.handleClientFrame({
+      const accepted = await uploadFrame();
+      await harness.session.handleClientFrame({
         type: "sight_frame",
-        attachmentId,
-        cameraEpoch: 52,
-        source: "ambient",
+        attachmentId: accepted,
+        cameraEpoch: 61,
+        source: "live",
       });
-      const ending = harness.session.handleClientFrame({
+      await harness.session.handleClientFrame({
         type: "sight_end",
-        cameraEpoch: 52,
+        cameraEpoch: 61,
       });
-      await Promise.all([keeping, ending]);
-
+      const late = await uploadFrame();
+      await harness.session.handleClientFrame({
+        type: "sight_frame",
+        attachmentId: late,
+        cameraEpoch: 61,
+        source: "live",
+      });
+      expect(attachmentExists(late)).toBe(false);
+      expect(getMessages(harness.conversationId)).toHaveLength(0);
+      expect(harness.activeConversation.modeSessions.hasResidentWork()).toBe(
+        true,
+      );
+      await harness.session.close("client_end");
+      expect(harness.activeConversation.hasInFlightWork()).toBe(true);
+      harness.activeConversation.releaseProcessing(processing!);
       await waitFor(
         () =>
-          failedSessionId !== undefined &&
-          getConversationModeSession(harness.conversationId, failedSessionId)
-            ?.status === "completed" &&
-          !attachmentExists(attachmentId) &&
-          !coordinator.hasResidentWork(),
-        { message: "Timed out waiting for the failed frame to settle" },
+          getMessages(harness.conversationId).length === 1 &&
+          !harness.activeConversation.hasInFlightWork(),
       );
-      expect(getMessages(harness.conversationId)).toHaveLength(0);
+      const row = getMessages(harness.conversationId)[0]!;
+      const stamp = JSON.parse(row.metadata ?? "{}").modeSession;
       expect(
-        harness.frames.find((frame) => frame.type === "error"),
-      ).toMatchObject({
-        type: "error",
-        frameType: "sight_frame",
-        attachmentId,
-        recoverable: true,
-      });
+        getConversationModeSession(harness.conversationId, stamp.id)?.status,
+      ).toBe("completed");
+      expect(getAttachmentsForMessage(row.id)).toHaveLength(1);
+      expect(attachmentExists(accepted)).toBe(true);
+      expect(
+        harness.frames.filter((frame) => frame.type === "error"),
+      ).toMatchObject([{ frameType: "sight_frame", attachmentId: late }]);
     } finally {
-      claimTurn.mockRestore();
+      harness.activeConversation.releaseProcessing(processing!);
       await harness.session.close("client_end");
       harness.dispose();
     }
   });
 
-  test("keeps a persisted frame successful when ownership release throws", async () => {
+  test.each([false, true])(
+    "persists an accepted camera frame when its claim throws (partial: %s)",
+    async (partial) => {
+      const harness = createSessionHarness("Sight frame ownership failure");
+      const coordinator = harness.activeConversation.modeSessions;
+      const originalClaimTurn = coordinator.claimTurn.bind(coordinator);
+      let failedSessionId: string | undefined;
+      const claimTurn = spyOn(coordinator, "claimTurn").mockImplementation(
+        (turnId, source, at) => {
+          if (!turnId.startsWith("live-voice-camera:")) {
+            if (partial) {
+              originalClaimTurn(turnId, source, at);
+            }
+            throw new Error("session tracking unavailable");
+          }
+          const owner = originalClaimTurn(turnId, source, at);
+          failedSessionId = owner?.id;
+          return owner;
+        },
+      );
+      try {
+        await harness.session.start();
+        await harness.session.handleClientFrame({
+          type: "sight_start",
+          cameraEpoch: 52,
+          source: "ambient",
+        });
+        const attachmentId = await uploadFrame();
+        const keeping = harness.session.handleClientFrame({
+          type: "sight_frame",
+          attachmentId,
+          cameraEpoch: 52,
+          source: "ambient",
+        });
+        const ending = harness.session.handleClientFrame({
+          type: "sight_end",
+          cameraEpoch: 52,
+        });
+        await Promise.all([keeping, ending]);
+
+        await waitFor(
+          () =>
+            failedSessionId !== undefined &&
+            getConversationModeSession(harness.conversationId, failedSessionId)
+              ?.status === "completed" &&
+            getMessages(harness.conversationId).length === 1 &&
+            !coordinator.hasResidentWork(),
+          { message: "Timed out waiting for the accepted frame to settle" },
+        );
+        expect(attachmentExists(attachmentId)).toBe(true);
+        const row = getMessages(harness.conversationId)[0]!;
+        expect(getAttachmentsForMessage(row.id)).toHaveLength(1);
+        expect(
+          harness.frames.filter((frame) => frame.type === "error"),
+        ).toHaveLength(0);
+      } finally {
+        claimTurn.mockRestore();
+        await harness.session.close("client_end");
+        harness.dispose();
+      }
+    },
+  );
+
+  test("releases acquired residency after a refused camera start and accepts ordinary frames", async () => {
+    const harness = createSessionHarness("Sight start tracking failure", {
+      acquireResidency: true,
+    });
+    const claim = spyOn(
+      harness.activeConversation.modeSessions,
+      "claimTurn",
+    ).mockImplementation(() => {
+      throw new Error("tracking unavailable");
+    });
+    try {
+      await harness.session.start();
+      await harness.session.handleClientFrame({
+        type: "sight_start",
+        cameraEpoch: 1,
+        source: "live",
+      });
+      expect(
+        harness.frames.find((frame) => frame.type === "error"),
+      ).toMatchObject({ frameType: "sight_start" });
+      expect(harness.activeConversation.modeSessions.hasResidentWork()).toBe(
+        false,
+      );
+      expect(harness.activeConversation.hasInFlightWork()).toBe(false);
+      const attachmentId = await uploadFrame();
+      await harness.session.handleClientFrame({
+        type: "sight_frame",
+        attachmentId,
+      });
+      await waitFor(() => getMessages(harness.conversationId).length === 1);
+      expect(
+        JSON.parse(getMessages(harness.conversationId)[0]!.metadata ?? "{}")
+          .modeSession,
+      ).toBeUndefined();
+      expect(attachmentExists(attachmentId)).toBe(true);
+    } finally {
+      claim.mockRestore();
+      await harness.session.close("client_end");
+      harness.dispose();
+    }
+  });
+
+  test("keeps a persisted frame successful when bookkeeping and ownership release throw", async () => {
     const harness = createSessionHarness("Sight frame release failure");
     const coordinator = harness.activeConversation.modeSessions;
     const originalReleaseTurn = coordinator.releaseTurn.bind(coordinator);
@@ -1122,7 +1242,16 @@ describe("live-voice camera frames kept mid-call", () => {
         }
       },
     );
-    const trackPersistedRow = spyOn(coordinator, "trackPersistedRow");
+    const originalTrackRow = coordinator.trackPersistedRow.bind(coordinator);
+    const trackPersistedRow = spyOn(
+      coordinator,
+      "trackPersistedRow",
+    ).mockImplementation((turnId, messageId, at, options) => {
+      originalTrackRow(turnId, messageId, at, options);
+      if (turnId.startsWith("live-voice-camera:")) {
+        throw new Error("tracking unavailable after persistence");
+      }
+    });
     try {
       await harness.session.start();
       await harness.session.handleClientFrame({

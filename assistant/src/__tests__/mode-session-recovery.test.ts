@@ -4,6 +4,11 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 
 import {
+  isModeSessionRecoveryHealthy,
+  isSessionGroupsEnabled,
+  setModeSessionRecoveryHealthy,
+} from "../config/session-groups-gate.js";
+import {
   getDbMigrationReadiness,
   setDbMigrating,
   setDbReady,
@@ -16,11 +21,14 @@ import {
   recoverActiveConversationModeSessions,
   updateConversationModeSessionActivity,
 } from "../persistence/conversation-mode-sessions.js";
-import { migrateCreateConversationModeSessions } from "../persistence/migrations/380-create-conversation-mode-sessions.js";
+import { migrateCreateConversationModeSessions } from "../persistence/migrations/381-create-conversation-mode-sessions.js";
 import * as schema from "../persistence/schema.js";
+import { setOverridesForTesting } from "./feature-flag-test-helpers.js";
 
 afterEach(() => {
   setDbReady(true);
+  setModeSessionRecoveryHealthy(true);
+  setOverridesForTesting({});
 });
 
 function createStore() {
@@ -40,7 +48,7 @@ describe("mode session startup recovery", () => {
     setDbMigrating();
     let readinessDuringRecovery = getDbMigrationReadiness();
 
-    const result = recoverModeSessionsBeforeDbReady({}, () => {
+    const result = recoverModeSessionsBeforeDbReady(() => {
       readinessDuringRecovery = getDbMigrationReadiness();
       return 2;
     });
@@ -56,27 +64,32 @@ describe("mode session startup recovery", () => {
     });
   });
 
-  test("keeps database-backed work gated when recovery fails", () => {
-    setDbMigrating();
-    const recoveryError = new Error("recovery failed");
-
-    const result = recoverModeSessionsBeforeDbReady(
-      {
-        failedMigrations: [],
-        deferredMigrations: [],
-      },
-      () => {
+  test.each([false, true])(
+    "keeps ordinary work ready after recovery fails with flag %s",
+    (enabled) => {
+      setOverridesForTesting({ "session-groups": enabled });
+      setDbMigrating();
+      const recoveryError = new Error("recovery failed");
+      const result = recoverModeSessionsBeforeDbReady(() => {
         throw recoveryError;
-      },
-    );
-
-    expect(result).toEqual({ ok: false, error: recoveryError });
-    expect(getDbMigrationReadiness()).toMatchObject({
-      ready: false,
-      state: "failed",
-      error: "recovery failed",
-    });
-  });
+      });
+      expect(result).toEqual({ ok: false, error: recoveryError });
+      expect(getDbMigrationReadiness()).toEqual({
+        ready: true,
+        state: "ready",
+      });
+      expect(isModeSessionRecoveryHealthy()).toBe(false);
+      expect(isSessionGroupsEnabled()).toBe(false);
+      setOverridesForTesting({ "session-groups": true });
+      expect(isSessionGroupsEnabled()).toBe(false);
+      setDbMigrating();
+      expect(recoverModeSessionsBeforeDbReady(() => 1)).toEqual({
+        ok: true,
+        interruptedCount: 1,
+      });
+      expect(isSessionGroupsEnabled()).toBe(true);
+    },
+  );
 
   test("interrupts active records without fabricating an end time", () => {
     const { options } = createStore();
@@ -166,7 +179,19 @@ describe("mode session startup recovery", () => {
       },
       options,
     );
-    recoverActiveConversationModeSessions(options);
+    recoverModeSessionsBeforeDbReady(() => {
+      throw new Error("recovery unavailable");
+    });
+    expect(
+      getConversationModeSession("conv-123", "session-before-restart", options)
+        ?.status,
+    ).toBe("active");
+    setDbMigrating();
+    expect(
+      recoverModeSessionsBeforeDbReady(() =>
+        recoverActiveConversationModeSessions(options),
+      ),
+    ).toEqual({ ok: true, interruptedCount: 1 });
 
     expect(
       beginConversationModeSession(

@@ -40,6 +40,7 @@ import {
   type LiveVoiceBackgroundContinuationSpawner,
   LiveVoiceSession,
   type LiveVoiceSessionAudioArchiver,
+  type LiveVoiceSessionOptions,
   type LiveVoiceTtsStreamer,
   type LiveVoiceTurnStarter,
 } from "../live-voice-session.js";
@@ -218,9 +219,9 @@ function createHarness(options: {
   foregroundTaskResumeSilenceMs?: number;
   foregroundTaskMaxSuspendedMs?: number;
   foregroundTaskMaxInterveningTurns?: number;
-  resolveModeSessions?: (
-    conversationId: string,
-  ) => ConversationModeSessionCoordinator | undefined;
+  acquireModeSessionResidency?: NonNullable<
+    LiveVoiceSessionOptions["acquireModeSessionResidency"]
+  >;
 }) {
   const sequencer = createLiveVoiceServerFrameSequencer();
   const frames: LiveVoiceServerFrame[] = [];
@@ -321,8 +322,8 @@ function createHarness(options: {
             options.foregroundTaskMaxInterveningTurns,
         }
       : {}),
-    ...(options.resolveModeSessions
-      ? { resolveModeSessions: options.resolveModeSessions }
+    ...(options.acquireModeSessionResidency
+      ? { acquireModeSessionResidency: options.acquireModeSessionResidency }
       : {}),
   };
   const session = options.viaFactory
@@ -3087,7 +3088,10 @@ describe("LiveVoiceSession server VAD", () => {
       // The announcement must not fire during the hold window — the replay
       // turn is the delivery this test is about.
       continuationAnnounceSilenceMs: 5_000,
-      resolveModeSessions: () => modeSessions,
+      acquireModeSessionResidency: async () => ({
+        coordinator: modeSessions,
+        release: () => {},
+      }),
     });
 
     await session.start();

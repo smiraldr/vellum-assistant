@@ -60,6 +60,7 @@ export interface UseTranscriptScrollArgs {
   onLoadOlder: () => void;
   /** Hidden transcript content stays mounted without measuring or scrolling. */
   isVisible?: boolean;
+  sessionGroupsEnabled?: boolean;
 }
 
 export interface UseTranscriptScrollReturn {
@@ -83,6 +84,7 @@ export function useTranscriptScroll(
     isLoadingOlder,
     onLoadOlder,
     isVisible = true,
+    sessionGroupsEnabled = false,
   } = args;
 
   // Coerced to boolean so the dep arrays below re-fire exactly once on
@@ -115,6 +117,7 @@ export function useTranscriptScroll(
     isPinnedToLatest,
     showScrollToLatest,
     isVisible,
+    sessionGroupsEnabled,
   });
   useLayoutEffect(() => {
     latestRef.current = {
@@ -126,6 +129,7 @@ export function useTranscriptScroll(
       isPinnedToLatest,
       showScrollToLatest,
       isVisible,
+      sessionGroupsEnabled,
     };
   }, [
     items,
@@ -136,6 +140,7 @@ export function useTranscriptScroll(
     isPinnedToLatest,
     showScrollToLatest,
     isVisible,
+    sessionGroupsEnabled,
   ]);
 
   // ---------- Saved anchor for prepend preservation ---------------------
@@ -417,13 +422,17 @@ export function useTranscriptScroll(
     // the current commit).
     const el = transcriptRef.current?.getScrollElement();
     if (el) {
-      const renderedMessageIds = new Set(
-        transcriptRef.current?.getRenderedMessageIds?.() ?? [],
-      );
-      const hasRenderedProgress = [...renderedMessageIds].some(
-        (id) => !renderedMessageIdsRef.current.has(id),
-      );
-      renderedMessageIdsRef.current = renderedMessageIds;
+      const itemKeysChanged = !haveSameItemKeys(prev, items);
+      let hasRenderedProgress = true;
+      if (latest.sessionGroupsEnabled && itemKeysChanged) {
+        const renderedMessageIds = new Set(
+          transcriptRef.current?.getRenderedMessageIds?.() ?? [],
+        );
+        hasRenderedProgress = [...renderedMessageIds].some(
+          (id) => !renderedMessageIdsRef.current.has(id),
+        );
+        renderedMessageIdsRef.current = renderedMessageIds;
+      }
       const classification = classifyScrollPosition(
         {
           scrollTop: el.scrollTop,
@@ -458,9 +467,9 @@ export function useTranscriptScroll(
       if (
         classification.shouldLoadOlder &&
         !loadOlderInFlightRef.current &&
-        !haveSameItemKeys(prev, items) &&
+        itemKeysChanged &&
         hasRenderedProgress &&
-        !suppressNextItemsLoadRef.current
+        (!latest.sessionGroupsEnabled || !suppressNextItemsLoadRef.current)
       ) {
         if (!shouldAutoPinRef.current) {
           const firstItem = items[0];
@@ -722,7 +731,8 @@ export function useTranscriptScroll(
         clientHeight: target.clientHeight,
       };
       const latest = latestRef.current;
-      const suppressDisclosureLoad = suppressNextItemsLoadRef.current;
+      const suppressDisclosureLoad =
+        latest.sessionGroupsEnabled && suppressNextItemsLoadRef.current;
       clearDisclosureSuppression();
       const classification = classifyScrollPosition(metrics, {
         hasMore: latest.hasMore,

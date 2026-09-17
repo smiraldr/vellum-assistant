@@ -613,6 +613,51 @@ describe("server frame dispatch", () => {
     ]);
   });
 
+  test("a refused sight_start keeps the voice session active and sends subsequent frames without lifecycle", async () => {
+    const { client, ws } = await ready({ sightSessions: true });
+    const errors: unknown[] = [];
+    client.on("error", (error) => errors.push(error));
+    expect(client.sightStart(7, "live")).toBe(true);
+    ws.receive({
+      type: "error",
+      seq: 10,
+      code: "invalid_frame",
+      message: "Could not start that camera run.",
+      frameType: "sight_start",
+      recoverable: true,
+    });
+    expect(
+      client.sightFrame("att-1", undefined, { cameraEpoch: 7, source: "live" }),
+    ).toBe(true);
+    expect(ws.sentJson.at(-1)).toEqual({
+      type: "sight_frame",
+      attachmentId: "att-1",
+    });
+    expect(client.sightStart(8, "live")).toBe(false);
+    expect(errors).toEqual([]);
+  });
+
+  test("an individual stale sight_frame does not clear lifecycle negotiation", async () => {
+    const { client, ws } = await ready({ sightSessions: true });
+    expect(client.sightStart(7, "live")).toBe(true);
+    ws.receive({
+      type: "error",
+      seq: 10,
+      code: "invalid_frame",
+      message: "That camera run is no longer active.",
+      frameType: "sight_frame",
+      attachmentId: "att-old",
+      recoverable: true,
+    });
+    expect(
+      client.sightFrame("att-1", undefined, { cameraEpoch: 7, source: "live" }),
+    ).toBe(true);
+    expect(ws.sentJson.at(-1)).toMatchObject({
+      cameraEpoch: 7,
+      source: "live",
+    });
+  });
+
   test("keeps the legacy frame shape when lifecycle is not negotiated", async () => {
     const { client, ws } = await ready();
 

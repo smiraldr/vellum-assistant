@@ -267,6 +267,24 @@ beforeEach(() => {
 });
 
 describe("POST /v1/conversations/:id/retry", () => {
+  test("tracking invalidation failure does not prevent retry", async () => {
+    const ctx = makeConversation();
+    activeConversation = ctx.conversation;
+    ctx.invalidateAllStructuralWaits.mockImplementation(() => {
+      throw new Error("session tracking unavailable");
+    });
+    const res = await callHandler(
+      retryHandler,
+      makeRequest(),
+      { id: "conv-retry-test" },
+      202,
+    );
+    expect(res.status).toBe(202);
+    await settle();
+    expect(discardMock).toHaveBeenCalledTimes(1);
+    expect(ctx.runAgentLoop).toHaveBeenCalledTimes(1);
+  });
+
   test("202s, discards the tail, and re-runs the loop from the anchor", async () => {
     const ctx = makeConversation();
     activeConversation = ctx.conversation;

@@ -1,10 +1,4 @@
-import {
-  type ReactNode,
-  type RefCallback,
-  useCallback,
-  useLayoutEffect,
-  useRef,
-} from "react";
+import { type ReactNode, useCallback, useLayoutEffect, useRef } from "react";
 import {
   Camera,
   ChevronRight,
@@ -66,7 +60,6 @@ export interface SessionGroupRowProps {
   onOpenChange: (open: boolean) => void;
   /** Keeps the reply subtree mounted while its grouping header arrives. */
   headerVisible?: boolean;
-  headerRef?: RefCallback<HTMLButtonElement>;
   children: ReactNode;
 }
 
@@ -182,7 +175,6 @@ export function SessionGroupRow({
   open,
   onOpenChange,
   headerVisible = true,
-  headerRef,
   children,
 }: SessionGroupRowProps) {
   const { t, i18n } = useTranslation("chat");
@@ -196,14 +188,6 @@ export function SessionGroupRow({
     t,
     i18n.resolvedLanguage ?? i18n.language,
   );
-  const setTriggerRef = useCallback(
-    (node: HTMLButtonElement | null) => {
-      triggerRef.current = node;
-      headerRef?.(node);
-    },
-    [headerRef],
-  );
-
   const focusTriggerFromContent = useCallback(() => {
     const activeElement = document.activeElement;
     if (
@@ -239,7 +223,7 @@ export function SessionGroupRow({
     >
       <Collapsible.Item value={SESSION_VALUE}>
         <Collapsible.Trigger
-          ref={setTriggerRef}
+          ref={triggerRef}
           hidden={!headerVisible}
           disabled={!headerVisible}
           aria-hidden={!headerVisible}

@@ -85,6 +85,7 @@ import {
   getConversationIfExists,
   isSameIncarnation,
 } from "../daemon/conversation-store.js";
+import { bestEffortModeSessionTracking } from "../daemon/mode-session-tracking.js";
 import type { TrustContext } from "../daemon/trust-context-types.js";
 import {
   deleteOrphanAttachments,
@@ -747,6 +748,7 @@ function persistStandaloneImage(
     const conversation = findConversation(conversationId);
     modeSessionCoordinator = conversation?.modeSessions;
     let owner: ModeSession | undefined;
+    let trackingFailed = false;
     try {
       owner = modeSessionCoordinator?.claimTurn(
         requestId,
@@ -754,32 +756,23 @@ function persistStandaloneImage(
         Date.now(),
       );
     } catch (err) {
+      trackingFailed = true;
       log.warn(
         { err, conversationId, attachmentId },
         "Standalone camera image could not claim its accepted session owner",
       );
-      try {
-        modeSessionCoordinator?.releaseTurn(requestId);
-      } catch (releaseErr) {
-        log.warn(
-          { err: releaseErr, conversationId, attachmentId },
-          "Standalone camera image could not release its failed session claim",
-        );
-      }
-      reclaimOrDefer(
-        conversationId,
-        [attachmentId],
-        persistOptions.content,
-        requestId,
-        kind,
-      );
-      return Promise.resolve({ ok: false });
     }
-    if (!conversation || owner?.id !== modeSessionSource.id) {
+    if (
+      !conversation ||
+      (!trackingFailed && owner?.id !== modeSessionSource.id)
+    ) {
       log.warn(
         { conversationId, attachmentId },
         "Standalone camera image lost its accepted session owner",
       );
+      bestEffortModeSessionTracking("stale camera claim release", () =>
+        modeSessionCoordinator?.releaseTurn(requestId),
+      );
       reclaimOrDefer(
         conversationId,
         [attachmentId],
@@ -789,7 +782,9 @@ function persistStandaloneImage(
       );
       return Promise.resolve({ ok: false });
     }
-    modeSession = { id: owner.id, mode: owner.mode };
+    if (owner) {
+      modeSession = { id: owner.id, mode: owner.mode };
+    }
   }
   return enqueueStandaloneImagePersist(
     conversationId,

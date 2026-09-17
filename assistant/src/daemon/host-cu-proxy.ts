@@ -13,7 +13,6 @@
  * RPC lifecycle (resolve/reject/timer/detachAbort) is stored in
  * pendingInteractions alongside routing metadata.
  */
-
 import { v4 as uuid } from "uuid";
 
 import { loadConfig } from "../config/loader.js";
@@ -30,6 +29,7 @@ import type { ToolExecutionResult } from "../tools/types.js";
 import { AssistantError, ErrorCode } from "../util/errors.js";
 import { getLogger } from "../util/logger.js";
 import { resolveHostCuTarget } from "./host-cu-target.js";
+import { bestEffortModeSessionTracking } from "./mode-session-tracking.js";
 
 const log = getLogger("host-cu-proxy");
 
@@ -410,7 +410,9 @@ export class HostCuProxy {
         isError: true,
       });
     }
-    onValidatedDispatch?.();
+    bestEffortModeSessionTracking("computer admission", () =>
+      onValidatedDispatch?.(),
+    );
     const scopedObservation = hasCaptureTarget(input);
     if (scopedObservation) {
       this._previousAXTree = undefined;

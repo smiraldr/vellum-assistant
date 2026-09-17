@@ -15,6 +15,7 @@ import type { ModeSessionDescriptor } from "@vellumai/assistant-api";
 export type TranscriptItemKind =
   | "message"
   | "thinking"
+  | "pendingDesktopHelp"
   | "pendingSecret"
   | "pendingConfirmation"
   | "pendingContactRequest"
@@ -49,6 +50,11 @@ export interface ThinkingItem extends TranscriptItemBase {
    * prompt — is signaling progress (see `shouldShowThinkingIndicator`).
    */
   active: boolean;
+}
+
+export interface PendingDesktopHelpItem extends TranscriptItemBase {
+  kind: "pendingDesktopHelp";
+  requestId: string;
 }
 
 export interface PendingSecretItem extends TranscriptItemBase {
@@ -115,6 +121,7 @@ export interface EphemeralMetaItem extends TranscriptItemBase {
 export type TranscriptItem =
   | MessageItem
   | ThinkingItem
+  | PendingDesktopHelpItem
   | PendingSecretItem
   | PendingConfirmationItem
   | PendingContactRequestItem

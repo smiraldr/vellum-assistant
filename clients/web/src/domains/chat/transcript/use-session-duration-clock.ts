@@ -91,8 +91,8 @@ function getDisabledSnapshot(): null {
 }
 
 /**
- * Returns one shared coarse clock while this summary is active and visible.
- * The caller owns runtime and viewport eligibility through `enabled`.
+ * Returns one shared coarse clock while this summary is eligible and the app is visible.
+ * The caller owns runtime eligibility through `enabled`.
  */
 export function useSessionDurationClock(enabled: boolean): number | null {
   return useSyncExternalStore(

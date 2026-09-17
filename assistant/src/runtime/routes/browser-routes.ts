@@ -20,15 +20,13 @@ import {
   type BrowserOperation,
 } from "../../browser/types.js";
 import { shouldUseVirtualDesktopBrowser } from "../../browser/virtual-desktop-target.js";
+import { bestEffortModeSessionTracking } from "../../daemon/mode-session-tracking.js";
 import { executeDesktopBrowserOperation } from "../../desktop/desktop-browser-operations.js";
 import type { ContentBlock } from "../../providers/types.js";
-import { getLogger } from "../../util/logger.js";
 import { LOCAL_PRINCIPALS } from "../auth/route-policy.js";
 import { resolveBrowserExecutionContext } from "./browser-context.js";
 export { browserCliConversationKey } from "./browser-context.js";
 import type { RouteDefinition, RouteHandlerArgs } from "./types.js";
-
-const log = getLogger("browser-routes");
 
 // ── Param validation ─────────────────────────────────────────────────
 
@@ -83,11 +81,13 @@ async function handleBrowserExecute({
   const { context, conversation } = resolved;
   const typedOperation = operation as BrowserOperation;
   const operationToken = conversation?.currentRequestId
-    ? conversation.browserModeSessions.beginOperation({
-        turnId: conversation.currentRequestId,
-        lifecycle: browserOperationLifecycle(typedOperation),
-        at: Date.now(),
-      })
+    ? bestEffortModeSessionTracking("browser admission", () =>
+        conversation.browserModeSessions.beginOperation({
+          turnId: conversation.currentRequestId!,
+          lifecycle: browserOperationLifecycle(typedOperation),
+          at: Date.now(),
+        }),
+      )
     : undefined;
   const execute = shouldUseVirtualDesktopBrowser(desktop, input, context)
     ? executeDesktopBrowserOperation
@@ -96,7 +96,7 @@ async function handleBrowserExecute({
     if (!operationToken) {
       return;
     }
-    try {
+    bestEffortModeSessionTracking("browser completion", () =>
       conversation?.browserModeSessions.finishOperation(operationToken, {
         at: Date.now(),
         isError,
@@ -106,13 +106,8 @@ async function handleBrowserExecute({
           : typedOperation === "detach"
             ? { terminalReason: "browser_detached" as const }
             : {}),
-      });
-    } catch (error) {
-      log.warn(
-        { err: error, conversationId, operation: typedOperation },
-        "Browser operation session tracking failed",
-      );
-    }
+      }),
+    );
   };
   let result;
   try {

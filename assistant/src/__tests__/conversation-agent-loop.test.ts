@@ -804,6 +804,7 @@ function makeCtx(
     keepsSessionOpenAfterTurn: () => false,
     trackPersistedRow: () => false,
     recordStructuralWait: () => false,
+    invalidateStructuralWait: mock(() => false),
     beginDraining: () => false,
     finalizeTurn: () => false,
     releaseTurn: () => false,
@@ -1158,6 +1159,110 @@ function makeModeSessionDouble(options?: {
 
 describe("session-agent-loop", () => {
   describe("mode session settlement", () => {
+    test.each(["reply", "provider error"] as const)(
+      "row tracking failures preserve tool output and the final %s",
+      async (outcome) => {
+        const sessions = makeModeSessionDouble();
+        sessions.trackPersistedRow.mockImplementation(() => {
+          throw new Error("session row tracking unavailable");
+        });
+        for (let index = 1; index <= 3; index += 1) {
+          reserveMessageMock.mockImplementationOnce(async () => ({
+            id: `msg-tracking-${index}`,
+            createdAt: 1_700_000_000_050 + index,
+          }));
+        }
+        mockMessageById = {
+          id: "msg-tracking-2",
+          conversationId: "test-conv",
+          createdAt: 1_700_000_000_052,
+          role: "user",
+          content: "[]",
+          metadata: null,
+        };
+        const scripted = createMockProvider([
+          toolUseResponse("tool-123", "file_read", {}),
+          outcome === "reply"
+            ? textResponse("Finished reading")
+            : new Error("upstream unavailable"),
+        ]);
+        let savedToolOutputBeforeFollowup = false;
+        const provider: Provider = {
+          ...scripted.provider,
+          async sendMessage(messages, options) {
+            if (scripted.calls.length === 1) {
+              savedToolOutputBeforeFollowup = inflightDeltaFiles().some(
+                (path) => readFileSync(path, "utf8").includes("file content"),
+              );
+            }
+            return scripted.provider.sendMessage(messages, options);
+          },
+        };
+        const executeTool = mock(async () => ({
+          content: "file content",
+          isError: false,
+        }));
+        const ctx = makeCtx({
+          modeSessions: sessions.coordinator,
+          loopProvider: provider,
+          loopTools: [
+            {
+              name: "file_read",
+              description: "Read a file",
+              input_schema: { type: "object", properties: {} },
+            },
+          ],
+          toolExecutor: executeTool,
+        });
+        const events: AssistantEvent[] = [];
+
+        await runAgentLoopImpl(ctx, "read the file", "msg-user-123", (event) =>
+          events.push(event),
+        );
+
+        expect(executeTool).toHaveBeenCalledTimes(1);
+        expect(scripted.calls).toHaveLength(2);
+        expect(savedToolOutputBeforeFollowup).toBe(true);
+        expect(
+          events.filter((event) => event.type === "assistant_turn_start"),
+        ).toHaveLength(2);
+        expect(
+          events.filter((event) => event.type === "message_complete"),
+        ).toHaveLength(1);
+        expect(events.some((event) => event.type === "error")).toBe(false);
+        expect(inflightDeltaFiles()).toHaveLength(0);
+        expect(sessions.finalizeTurn).toHaveBeenCalledTimes(1);
+        const finalized = (
+          finalizeMessageContentMock.mock.calls as unknown as Array<
+            [string, string, unknown]
+          >
+        ).map(([id, content]) => ({ id, content }));
+        expect(finalized).toContainEqual({
+          id: "msg-tracking-2",
+          content: expect.stringContaining("file content"),
+        });
+        if (outcome === "reply") {
+          expect(finalized).toContainEqual({
+            id: "msg-tracking-3",
+            content: expect.stringContaining("Finished reading"),
+          });
+          expect(addMessageMock).not.toHaveBeenCalled();
+        } else {
+          expect(addMessageMock).toHaveBeenCalledTimes(1);
+          expect(backfillMessageIdOnLogsMock).toHaveBeenCalledWith(
+            "test-conv",
+            "mock-msg-id",
+          );
+          expect(ctx.messages.at(-1)?.content).toEqual([
+            {
+              type: "text",
+              text: mockConversationErrorClassification.userMessage,
+            },
+          ]);
+        }
+      },
+    );
+
     test("finalizes an owned turn after its assistant output settles", async () => {
       const sessions = makeModeSessionDouble();
       const ctx = makeCtx({ modeSessions: sessions.coordinator });
@@ -1169,7 +1274,7 @@ describe("session-agent-loop", () => {
         expect.any(String),
         expect.anything(),
       );
-      expect(sessions.beginDraining).toHaveBeenCalledWith("test-req");
+      expect(sessions.beginDraining).not.toHaveBeenCalled();
       expect(sessions.finalizeTurn).toHaveBeenCalledWith({
         turnId: "test-req",
         status: "completed",
@@ -1179,12 +1284,15 @@ describe("session-agent-loop", () => {
       });
     });
 
-    test.each(["beginDraining", "finalizeTurn"] as const)(
-      "keeps a delivered reply successful when %s fails",
+    test.each(["throw", "conflict"] as const)(
+      "keeps a delivered reply successful after a finalization %s",
       async (failedOperation) => {
         const sessions = makeModeSessionDouble();
-        sessions[failedOperation].mockImplementation(() => {
-          throw new Error("session settlement unavailable");
+        sessions.finalizeTurn.mockImplementation(() => {
+          if (failedOperation === "throw") {
+            throw new Error("session settlement unavailable");
+          }
+          return false;
         });
         const ctx = makeCtx({ modeSessions: sessions.coordinator });
         const events: AssistantEvent[] = [];
@@ -1215,8 +1323,11 @@ describe("session-agent-loop", () => {
 
       await runAgentLoopImpl(ctx, "hello", "msg-1", () => {});
 
-      expect(sessions.beginDraining).toHaveBeenCalledWith("test-req");
-      expect(sessions.releaseTurn).toHaveBeenCalledWith("test-req");
+      expect(sessions.beginDraining).not.toHaveBeenCalled();
+      expect(sessions.releaseTurn).toHaveBeenCalledWith("test-req", {
+        status: "completed",
+        endReason: "turn_settled",
+      });
       expect(sessions.finalizeTurn).not.toHaveBeenCalled();
     });
 
@@ -3115,6 +3226,38 @@ describe("session-agent-loop", () => {
       expect(ctx.pendingSurfaceActions.has("page-1")).toBe(true);
       expect(ctx.pendingSurfaceActions.has("stale-table-1")).toBe(false);
       expect(ctx.pendingSurfaceActions.has("stale-form-1")).toBe(false);
+      expect(ctx.modeSessions.invalidateStructuralWait).toHaveBeenCalledTimes(
+        2,
+      );
+      expect(ctx.modeSessions.invalidateStructuralWait).toHaveBeenCalledWith({
+        kind: "surface",
+        responseId: "stale-table-1",
+      });
+      expect(ctx.modeSessions.invalidateStructuralWait).toHaveBeenCalledWith({
+        kind: "surface",
+        responseId: "stale-form-1",
+      });
+    });
+
+    test("tracking cleanup failure does not prevent a new user turn", async () => {
+      const events: AssistantEvent[] = [];
+      const ctx = makeCtx();
+      ctx.pendingSurfaceActions.set("stale-surface", { surfaceType: "form" });
+      ctx.modeSessions.invalidateStructuralWait = () => {
+        throw new Error("session tracking unavailable");
+      };
+      await runAgentLoopImpl(
+        ctx,
+        "hello",
+        "msg-1",
+        (event) => events.push(event),
+        { isUserMessage: true },
+      );
+      expect(ctx.pendingSurfaceActions.has("stale-surface")).toBe(false);
+      expect(
+        events.filter((event) => event.type === "message_complete"),
+      ).toHaveLength(1);
+      expect(events.some((event) => event.type === "error")).toBe(false);
     });
 
     test("withholds the dismissal event and keeps the surface pending when its persisted write fails", async () => {
@@ -3148,6 +3291,7 @@ describe("session-agent-loop", () => {
       // The card stays live on the client, so the daemon must keep treating it
       // as pending; the sweep retries on the next user message.
       expect(ctx.pendingSurfaceActions.has("stale-table-2")).toBe(true);
+      expect(ctx.modeSessions.invalidateStructuralWait).not.toHaveBeenCalled();
     });
 
     test("dismisses the remaining surfaces when one write fails", async () => {
@@ -3211,6 +3355,7 @@ describe("session-agent-loop", () => {
       expect(completeEvents).toHaveLength(0);
       // The pending surface should still be there
       expect(ctx.pendingSurfaceActions.has("active-table-1")).toBe(true);
+      expect(ctx.modeSessions.invalidateStructuralWait).not.toHaveBeenCalled();
     });
 
     test("no-op when no pending surfaces exist", async () => {
@@ -3269,6 +3414,11 @@ describe("session-agent-loop", () => {
         isUserMessage: true,
       });
 
+      expect(ctx.pendingSurfaceActions.has("stale-table-1")).toBe(false);
+      expect(ctx.modeSessions.invalidateStructuralWait).toHaveBeenCalledWith({
+        kind: "surface",
+        responseId: "stale-table-1",
+      });
       expect(ctx.isProcessing()).toBe(false);
       expect(ctx.abortController).toBeNull();
       expect(ctx.currentRequestId).toBeUndefined();

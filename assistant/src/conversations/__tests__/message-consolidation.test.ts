@@ -293,6 +293,52 @@ describe("mergeToolResultsIntoAssistantMessages", () => {
     expect(userBlocks.map((b) => b.type)).toEqual(["text"]);
   });
 
+  test.each([null, ownedMetadata()])(
+    "preserves matching results across adjacent mixed user rows (metadata=%s)",
+    (metadata) => {
+      const calls = [
+        { type: "tool_use", id: "tool-first", name: "test", input: {} },
+        { type: "tool_use", id: "tool-second", name: "test", input: {} },
+      ] as const;
+      const firstResult = {
+        type: "tool_result",
+        tool_use_id: "tool-first",
+        content: "first",
+      } as const;
+      const secondResult = {
+        type: "tool_result",
+        tool_use_id: "tool-second",
+        content: "second",
+      } as const;
+      const userText = { type: "text", text: "Additional context" } as const;
+      const rows = [
+        makeMsg("assistant", JSON.stringify(calls), {
+          id: "assistant-123",
+          metadata,
+        }),
+        makeMsg("user", JSON.stringify([firstResult, userText]), {
+          id: "user-mixed",
+          metadata,
+        }),
+        makeMsg("user", JSON.stringify([secondResult]), {
+          id: "user-result",
+          metadata,
+        }),
+      ];
+      const result = consolidateMessageRows(rows);
+      expect(
+        result.messages.map(({ id, content }) => ({ id, content })),
+      ).toEqual([
+        { id: "assistant-123", content: [...calls, firstResult, secondResult] },
+        { id: "user-mixed", content: [userText] },
+      ]);
+      expect(result.mergedIdMap.get("assistant-123")).toEqual([
+        "user-mixed",
+        "user-result",
+      ]);
+    },
+  );
+
   test("passes plain user text through unchanged", () => {
     const messages = [makeMsg("user", "hi"), makeMsg("assistant", "hello")];
     const merged = mergeToolResultsIntoAssistantMessages(messages);

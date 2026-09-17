@@ -115,7 +115,11 @@ later can't be ring-replayed. The recovery path is a refetch:
 - History responses can include batched `modeSessions` descriptors. Active
   descriptor ids from the cached page are included in the next latest-page
   request so completion remains visible even after the group's rows move
-  outside that page. Duplicate descriptors resolve by monotonic revision.
+  outside that page. Duplicate descriptors resolve by monotonic revision in
+  the history query cache's structural-sharing merge. A stale explicit revision
+  preserves the newer descriptor while independent message/stamp changes still
+  apply. An omitted descriptor is unavailable and is not restored from a second
+  client store. Grouping reads the cache directly across transcript remounts.
 
 ## Invariant
 

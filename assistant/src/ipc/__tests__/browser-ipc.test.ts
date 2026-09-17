@@ -596,6 +596,28 @@ describe("browser_execute route", () => {
     expect(activateSource).not.toHaveBeenCalled();
   });
 
+  test.each(["navigate", "close"] as const)(
+    "executes %s once after tracking admission throws",
+    async (operation) => {
+      mockConversation = {
+        currentRequestId: "turn-123",
+        browserModeSessions: {
+          ...browserLifecycle(),
+          beginOperation() {
+            throw new Error("tracking unavailable");
+          },
+        },
+        getTurnActorPrincipalId: () => undefined,
+      };
+      const result = await callHandler({
+        operation,
+        conversationId: "conv-live",
+      });
+      expect(result).toEqual({ content: "ok", isError: false });
+      expect(mockOperationCalls).toHaveLength(1);
+    },
+  );
+
   test("passes typed terminal success and failure outcomes", async () => {
     mockConversation = {
       currentRequestId: "turn-123",

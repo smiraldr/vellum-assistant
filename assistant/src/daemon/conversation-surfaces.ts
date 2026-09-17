@@ -89,6 +89,7 @@ import type {
 } from "./message-protocol.js";
 import { INTERACTIVE_SURFACE_TYPES } from "./message-protocol.js";
 import { isRowVisibleToUntrustedActor } from "./message-provenance.js";
+import { bestEffortModeSessionTracking } from "./mode-session-tracking.js";
 import type { TrustContext } from "./trust-context-types.js";
 import { restingTrust } from "./trust-context-types.js";
 import { turnActorPrincipalId } from "./turn-actor.js";
@@ -198,20 +199,24 @@ function acceptModeSessionSurfaceResponse(
   requestId: string,
   surfaceId: string,
 ): void {
-  ctx.modeSessions?.acceptTurn(requestId, {
-    kind: "surface",
-    responseId: surfaceId,
-  });
+  bestEffortModeSessionTracking("surface response admission", () =>
+    ctx.modeSessions?.acceptTurn(requestId, {
+      kind: "surface",
+      responseId: surfaceId,
+    }),
+  );
 }
 
 function invalidateModeSessionSurfaceWait(
   ctx: Partial<Pick<Conversation, "modeSessions">>,
   surfaceId: string,
 ): void {
-  ctx.modeSessions?.invalidateStructuralWait({
-    kind: "surface",
-    responseId: surfaceId,
-  });
+  bestEffortModeSessionTracking("surface wait invalidation", () =>
+    ctx.modeSessions?.invalidateStructuralWait({
+      kind: "surface",
+      responseId: surfaceId,
+    }),
+  );
 }
 
 function settleModeSessionSurfaceWait(
@@ -3234,13 +3239,15 @@ export async function surfaceProxyResolver(
           : typeof input.answer === "string"
             ? input.answer
             : "Task complete";
-      ctx.computerUseModeSessions.endTask({
-        turnId: ctx.currentRequestId,
-        source: {
-          sourceId: hostCuProxy.sourceId,
-          generation: hostCuProxy.resetGeneration,
-        },
-      });
+      bestEffortModeSessionTracking("computer completion", () =>
+        ctx.computerUseModeSessions.endTask({
+          turnId: ctx.currentRequestId,
+          source: {
+            sourceId: hostCuProxy.sourceId,
+            generation: hostCuProxy.resetGeneration,
+          },
+        }),
+      );
       hostCuProxy.endTask(ctx.conversationId);
       return { content: summary, isError: false };
     }

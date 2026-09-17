@@ -153,6 +153,7 @@ import {
   unregisterInflightTurn,
 } from "./inflight-turn-registry.js";
 import type { UsageStats } from "./message-protocol.js";
+import { bestEffortModeSessionTracking } from "./mode-session-tracking.js";
 import {
   persistReactionRecords,
   type QueuedReactionRecord,
@@ -344,19 +345,21 @@ function settleModeSessionTurn(
       ctx.modeSessions.releaseTurn(turnId);
       return;
     }
-    ctx.modeSessions.beginDraining(turnId);
     const disposition = ctx.modeSessions.getTerminalDisposition(turnId);
     if (disposition) {
-      ctx.modeSessions.releaseTurn(turnId);
+      ctx.modeSessions.releaseTurn(turnId, fallback);
       return;
     }
-    ctx.modeSessions.finalizeTurn({
+    const finalized = ctx.modeSessions.finalizeTurn({
       turnId,
       status: fallback.status,
       endedAt: Date.now(),
       endReason: fallback.endReason,
       lastActivityAt: Date.now(),
     });
+    if (!finalized) {
+      ctx.modeSessions.releaseTurn(turnId, fallback);
+    }
   } catch (err) {
     log.warn(
       { err, conversationId: ctx.conversationId, turnId },
@@ -1147,13 +1150,19 @@ export async function runAgentLoopImpl(
         if (!markSurfaceCompleted(ctx, surfaceId, "Dismissed")) {
           continue;
         }
+        ctx.pendingSurfaceActions.delete(surfaceId);
+        bestEffortModeSessionTracking("stale surface wait invalidation", () =>
+          ctx.modeSessions.invalidateStructuralWait({
+            kind: "surface",
+            responseId: surfaceId,
+          }),
+        );
         onEvent({
           type: "ui_surface_complete",
           conversationId: ctx.conversationId,
           surfaceId,
           summary: "Dismissed",
         });
-        ctx.pendingSurfaceActions.delete(surfaceId);
       }
     }
 
@@ -1678,18 +1687,23 @@ export async function runAgentLoopImpl(
         rlog,
       );
       if (toolResultRowId) {
-        const toolResultRow = getMessageById(
-          toolResultRowId,
-          ctx.conversationId,
+        bestEffortModeSessionTracking(
+          "remaining tool result finalization",
+          () => {
+            const toolResultRow = getMessageById(
+              toolResultRowId,
+              ctx.conversationId,
+            );
+            if (toolResultRow) {
+              ctx.modeSessions.trackPersistedRow(
+                reqId,
+                toolResultRowId,
+                toolResultRow.createdAt,
+                { startsDisplayBoundary: false },
+              );
+            }
+          },
         );
-        if (toolResultRow) {
-          ctx.modeSessions.trackPersistedRow(
-            reqId,
-            toolResultRowId,
-            toolResultRow.createdAt,
-            { startsDisplayBoundary: false },
-          );
-        }
       }
     }
 
@@ -1722,10 +1736,12 @@ export async function runAgentLoopImpl(
           { metadata: yieldNoticeMetadata },
         );
         yieldNoticePersistedId = yieldRow.id;
-        ctx.modeSessions.trackPersistedRow(
-          reqId,
-          yieldRow.id,
-          yieldRow.createdAt,
+        bestEffortModeSessionTracking("budget yield notice persistence", () =>
+          ctx.modeSessions.trackPersistedRow(
+            reqId,
+            yieldRow.id,
+            yieldRow.createdAt,
+          ),
         );
       } catch (err) {
         // Non-fatal — a DB hiccup must not escalate a budget-yield exit into
@@ -1928,10 +1944,12 @@ export async function runAgentLoopImpl(
         // (or a downstream handler) doesn't try to clean up an id that
         // already corresponds to a finalized row.
         state.lastAssistantMessageId = errorRow.id;
-        ctx.modeSessions.trackPersistedRow(
-          reqId,
-          errorRow.id,
-          errorRow.createdAt,
+        bestEffortModeSessionTracking("provider error notice persistence", () =>
+          ctx.modeSessions.trackPersistedRow(
+            reqId,
+            errorRow.id,
+            errorRow.createdAt,
+          ),
         );
         state.assistantRowAwaitingFinalization = false;
         newMessages.push(errorAssistantMessage);

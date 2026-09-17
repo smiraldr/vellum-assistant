@@ -18,11 +18,12 @@
  */
 
 import {
+  replaceEqualDeep,
   useInfiniteQuery,
   useQueryClient,
   type InfiniteData,
 } from "@tanstack/react-query";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo } from "react";
 
 import {
   fetchLatestHistoryPage,
@@ -98,19 +99,12 @@ export function aggregateBackgroundToolCompletions(
 
 export function aggregateModeSessionDescriptors(
   pages: readonly PaginatedHistoryResult[] | undefined,
-  previous: ModeSessionDescriptor[] = [],
 ): ModeSessionDescriptor[] {
   if (!pages?.length) {
-    return previous;
+    return EMPTY_MODE_SESSION_DESCRIPTORS;
   }
   const byId = new Map<string, ModeSessionDescriptor>();
-  const representedIds = new Set<string>();
   for (const page of pages) {
-    for (const message of page.messages) {
-      if (message.modeSession) {
-        representedIds.add(message.modeSession.id);
-      }
-    }
     for (const descriptor of page.modeSessions ?? []) {
       const current = byId.get(descriptor.summary.id);
       if (!current || descriptor.summary.revision > current.summary.revision) {
@@ -118,25 +112,7 @@ export function aggregateModeSessionDescriptors(
       }
     }
   }
-  for (const descriptor of previous) {
-    const id = descriptor.summary.id;
-    const current = byId.get(id);
-    if (
-      current == null &&
-      (descriptor.summary.status === "active" || representedIds.has(id))
-    ) {
-      byId.set(id, descriptor);
-      continue;
-    }
-    if (current && current.summary.revision <= descriptor.summary.revision) {
-      byId.set(id, descriptor);
-    }
-  }
-  const descriptors = [...byId.values()];
-  return descriptors.length === previous.length &&
-    descriptors.every((descriptor, index) => descriptor === previous[index])
-    ? previous
-    : descriptors;
+  return [...byId.values()];
 }
 
 const MAX_REFRESHED_MODE_SESSION_IDS = 50;
@@ -159,43 +135,41 @@ export function modeSessionIdsForRefresh(
     : EMPTY_MODE_SESSION_IDS;
 }
 
-export function useAcceptedModeSessionDescriptors(
-  conversationId: string | null,
-  pages: readonly PaginatedHistoryResult[] | undefined,
-  enabled = true,
-): ModeSessionDescriptor[] {
-  const [accepted, setAccepted] = useState<{
-    conversationId: string | null;
-    descriptors: ModeSessionDescriptor[];
-  }>({ conversationId, descriptors: [] });
-  const descriptors = useMemo(() => {
-    if (!enabled) {
-      return EMPTY_MODE_SESSION_DESCRIPTORS;
-    }
-    return aggregateModeSessionDescriptors(
-      pages,
-      accepted.conversationId === conversationId ? accepted.descriptors : [],
-    );
-  }, [accepted, conversationId, enabled, pages]);
-  useEffect(() => {
-    if (!enabled) {
-      return;
-    }
-    setAccepted((current) => {
-      if (
-        current.conversationId === conversationId &&
-        current.descriptors === descriptors
-      ) {
-        return current;
-      }
-      return { conversationId, descriptors };
-    });
-  }, [conversationId, descriptors, enabled]);
-  return descriptors;
-}
-
 /** The shape `useInfiniteQuery` stores under a conversation-history key. */
 export type HistoryCache = InfiniteData<PaginatedHistoryResult>;
+
+export function reconcileHistoryModeSessions(
+  previous: HistoryCache | undefined,
+  incoming: HistoryCache,
+): HistoryCache {
+  if (!previous?.pages.some((page) => page.modeSessions?.length)) {
+    return replaceEqualDeep(previous, incoming);
+  }
+  const accepted = new Map(
+    aggregateModeSessionDescriptors(previous?.pages).map((descriptor) => [
+      descriptor.summary.id,
+      descriptor,
+    ]),
+  );
+  // An omitted descriptor is unavailable. Only explicit stale revisions inherit
+  // cached state; retaining omitted active records would invent live ownership.
+  const pages = incoming.pages.map((page) => {
+    if (!page.modeSessions?.length) {
+      return page;
+    }
+    return {
+      ...page,
+      modeSessions: page.modeSessions.map((descriptor) => {
+        const current = accepted.get(descriptor.summary.id);
+        return current &&
+          current.summary.revision >= descriptor.summary.revision
+          ? current
+          : descriptor;
+      }),
+    };
+  });
+  return replaceEqualDeep(previous, { ...incoming, pages });
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -303,6 +277,11 @@ export function useHistoryPagination({
     refetchOnWindowFocus: false,
     refetchOnReconnect: false,
     retry: shouldRetryDaemonError,
+    structuralSharing: (previous, incoming) =>
+      reconcileHistoryModeSessions(
+        previous as HistoryCache | undefined,
+        incoming as HistoryCache,
+      ),
   });
 
   // Flatten pages into a single chronological array.
@@ -347,10 +326,12 @@ export function useHistoryPagination({
     () => aggregateBackgroundToolCompletions(query.data?.pages),
     [query.data],
   );
-  const modeSessions = useAcceptedModeSessionDescriptors(
-    conversationId,
-    query.data?.pages,
-    sessionGroupsEnabled,
+  const modeSessions = useMemo(
+    () =>
+      sessionGroupsEnabled
+        ? aggregateModeSessionDescriptors(query.data?.pages)
+        : EMPTY_MODE_SESSION_DESCRIPTORS,
+    [query.data, sessionGroupsEnabled],
   );
 
   const latestPage = query.data?.pages[0];

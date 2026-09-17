@@ -24,7 +24,7 @@ never precedes the last confirmed activity.
 
 ## Persistence
 
-Migration 379 creates `conversation_mode_sessions`. Each row belongs to one
+Migration 381 creates `conversation_mode_sessions`. Each row belongs to one
 conversation through an `ON DELETE CASCADE` foreign key. The
 `(conversation_id, status)` index supports conversation-scoped active reads,
 while the primary key supports bounded ID batches for transcript pages.
@@ -51,10 +51,11 @@ the revision, preserves activity and message boundaries, records
 `assistant_restarted`, and leaves `endedAt` null. It runs on every boot rather
 than as a checkpointed migration.
 
-If recovery fails, database readiness remains failed and the assistant keeps
-its diagnostic surfaces available in degraded startup. New database-backed
-turns and interrupted-turn auto-resume do not start against records that still
-look active.
+If this auxiliary recovery fails, ordinary database readiness succeeds and
+tracking stays unavailable for that boot. History omits unrecovered active
+descriptors while preserving terminal records and message stamps. A subsequent
+boot retries through the same startup path. Required migration failures still
+block database readiness.
 
 Runtime source generations and structural question associations are owned by
 the producer and message-membership integration. Those process-local facts are
@@ -91,6 +92,18 @@ voice turns form a settlement barrier before terminal persistence. A camera
 epoch snapshots ownership before asynchronous frame persistence; stale epochs
 cannot join a later run.
 
+Tracking failures are logged and isolated from authorized actions and accepted
+content persistence. They never repeat the underlying action. A refused camera
+start clears client negotiation and falls back to untracked frames without
+revoking consent or ending voice. Individual stale-frame rejection does not
+use this fallback.
+
+Server admission is the camera boundary: an admitted frame can finish saving
+after stop, but a device-side capture delivered after its run ends is rejected
+and reclaimed. Reconnect pauses capture delivery and announces a fresh run
+after replacement readiness. In-flight uploads and native samples retain their
+captured ownership and cannot join the replacement run.
+
 The coordinator stores only `active`, `completed`, or `interrupted`. Waiting
 and finishing are revisioned runtime hints. Terminal dispositions remain
 pending in memory until all captured turns release, then one idempotent
@@ -107,16 +120,24 @@ or its source retires. Explicit conversation deletion and process shutdown
 keep their existing teardown semantics; startup recovery interrupts any
 durable active record left by process exit.
 
+Invalidating the final structural association retires a turn-lifetime source
+and lets accepted output settle. Successful abandoned waits end at their last
+confirmed activity with reason `structural_wait_abandoned`; cleanup does not
+extend their duration. Source-lifetime camera runs remain eligible. A retired
+disposition that cannot persist its terminal update releases residency and
+invalidates history without claiming completion. An active record without live
+ownership has no descriptor and renders as unavailable.
+
 ## Structural continuation
 
-When an owned computer-use or browser turn ends on an existing question,
-confirmation, secret request, or blocking UI surface, the coordinator records
-that exact response identifier in memory and leaves the session active. Only
-the accepted response carrying the same kind and identifier can claim the
-continuation turn. Rejected, stale, unrelated, or cross-conversation responses
-cannot inherit ownership. Accepting or dismissing a surface consumes or
-invalidates its association. Ordinary prose and an idle reusable resource do
-not continue a session.
+Structural waits associate an exact response identifier with the owned turn.
+Ordinary `ask_question` awaits its resolver inside that turn, so its answer
+resumes the existing owner. A blocking UI surface can accept a new turn: its
+matching response consumes the association before surface cleanup and retains
+the session ID. Rejected, stale, unrelated, or cross-conversation responses
+cannot inherit ownership. Dismissal invalidates the association. Ordinary prose
+and an idle reusable resource do not continue a session; later mode work starts
+a fresh ID and duration.
 
 Structural associations intentionally do not survive restart. Startup recovery
 terminalizes the old record, and a late response remains part of the existing
@@ -145,5 +166,13 @@ produces no transcript container.
 
 All membership, lifecycle, boundary, and runtime-hint changes reuse the
 conversation-messages `sync_changed` tag. Clients merge descriptors by
-revision and refetch through the existing history reconciliation path. There
-is no separate session event stream or polling endpoint.
+revision in the history query cache and refetch through the existing history
+reconciliation path. Explicit stale revisions cannot replace newer cached
+descriptors; an omitted descriptor remains unavailable. There is no separate
+descriptor store, session event stream, or polling endpoint.
+
+The transcript keeps lightweight segment identities for stable disclosure keys,
+not duplicate message bodies. Closed children unmount, and eligible mounted
+headers share one coarse clock that pauses while the app is hidden. No header
+visibility observer is required. With grouping disabled, the load-older guard
+uses the ordinary flat-transcript behavior and skips grouped DOM scans.

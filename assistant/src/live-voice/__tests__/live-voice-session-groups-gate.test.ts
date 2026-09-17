@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, mock, test } from "bun:test";
 
 import { setOverridesForTesting } from "../../__tests__/feature-flag-test-helpers.js";
+import { setModeSessionRecoveryHealthy } from "../../config/session-groups-gate.js";
 import {
   getLiveVoiceSessionManager,
   setBundledLiveVoiceSessionFactory,
@@ -57,12 +58,21 @@ async function captureProductionOptions(
 }
 
 afterEach(() => {
+  setModeSessionRecoveryHealthy(true);
   setOverridesForTesting({});
   setBundledLiveVoiceSessionFactory(null);
   setLiveVoiceSessionManagerForTesting(null);
 });
 
 describe("live voice session-groups gate", () => {
+  test.each([false, true])(
+    "omits camera tracking after failed recovery with flag %s",
+    async (enabled) => {
+      setModeSessionRecoveryHealthy(false);
+      const options = await captureProductionOptions(enabled);
+      expect(options.acquireModeSessionResidency).toBeUndefined();
+    },
+  );
   test("constructs a normal session without camera tracking while disabled", async () => {
     const options = await captureProductionOptions(false);
 

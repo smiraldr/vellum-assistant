@@ -45,6 +45,7 @@ import { isAssistantFeatureFlagEnabled } from "../../config/assistant-feature-fl
 import { getUserSelectableProfilesForProvider } from "../../config/default-profile-catalog.js";
 import { isHttpAuthDisabled } from "../../config/env.js";
 import { getConfig } from "../../config/loader.js";
+import { isModeSessionRecoveryHealthy } from "../../config/session-groups-gate.js";
 import { consolidateMessageRows } from "../../conversations/message-consolidation.js";
 import { resolveTurnCommitWaitMs } from "../../daemon/abort-watchdog.js";
 import { createApprovalConversationGenerator } from "../../daemon/approval-generators.js";
@@ -1078,11 +1079,19 @@ export async function handleListMessages({
     modeSessionActivityMap,
   } = consolidateDisplayTurns(projectionMessages);
   const liveConversation = findConversation(resolvedConversationId);
-  const modeSessions = summaries.map((summary) =>
-    liveConversation?.modeSessions
-      ? liveConversation.modeSessions.describeSummary(summary)
-      : { summary },
-  );
+  const modeSessions = summaries
+    .filter(
+      (summary) =>
+        isModeSessionRecoveryHealthy() || summary.status !== "active",
+    )
+    .flatMap((summary) => {
+      const descriptor = liveConversation?.modeSessions
+        ? liveConversation.modeSessions.describeSummary(summary)
+        : summary.status !== "active"
+          ? { summary }
+          : undefined;
+      return descriptor ? [descriptor] : [];
+    });
   const assistantSlackDisplayName = getAssistantName()?.trim() || undefined;
 
   // Parse each row's stored content and per-message metadata. Rendering is

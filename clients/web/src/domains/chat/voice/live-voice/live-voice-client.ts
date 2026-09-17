@@ -762,6 +762,13 @@ export class LiveVoiceChannelClient {
           });
           return;
         }
+        if (about === "sight_start") {
+          console.warn(
+            `live-voice: camera tracking unavailable: ${frame.message}`,
+          );
+          this.sightSessionsSupported = false;
+          return;
+        }
         if (about === "sight_frame") {
           // Kept out of the two buckets below, which is what the attribution
           // buys. An `unknown_type` here must not reach the `update_config`

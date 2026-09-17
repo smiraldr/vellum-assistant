@@ -18,6 +18,10 @@ import {
   updateConversationModeSessionBoundaries,
 } from "../persistence/conversation-mode-sessions.js";
 import { publishConversationMessagesChanged } from "../runtime/sync/resource-sync-events.js";
+import { getLogger } from "../util/logger.js";
+import { bestEffortModeSessionTracking } from "./mode-session-tracking.js";
+
+const log = getLogger("conversation-mode-session");
 
 export type ModeSessionStructuralKind =
   | "question"
@@ -25,10 +29,11 @@ export type ModeSessionStructuralKind =
   | "secret"
   | "surface";
 
-export interface ModeSessionSourceRegistration {
+interface ModeSessionSourceRegistration {
   sourceId: string;
   generation: number;
   session: ModeSessionSummary;
+  lifetime: "turn" | "source";
 }
 
 export interface ModeSessionSourceReference {
@@ -176,10 +181,6 @@ const defaultDependencies: ConversationModeSessionCoordinatorDependencies = {
   publishMessagesChanged: publishConversationMessagesChanged,
 };
 
-function sourceKey(sourceId: string): string {
-  return sourceId;
-}
-
 function associationKey(
   kind: ModeSessionStructuralKind,
   responseId: string,
@@ -204,14 +205,13 @@ function lastStampedRow(rows: TrackedRow[]): TrackedRow | undefined {
 export class ConversationModeSessionCoordinator {
   readonly #conversationId: string;
   readonly #dependencies: ConversationModeSessionCoordinatorDependencies;
-  readonly #sessions = new Map<string, ModeSessionSummary>();
   readonly #sources = new Map<string, SourceState>();
   readonly #sourceActivations = new Map<string, number>();
   readonly #turns = new Map<string, TurnState>();
   readonly #structuralAssociations = new Map<string, StructuralAssociation>();
   readonly #retiredDispositions = new Map<
     string,
-    ModeSessionTerminalDisposition
+    ModeSessionTerminalDisposition & { completeAtLastActivity?: boolean }
   >();
 
   constructor(
@@ -222,7 +222,7 @@ export class ConversationModeSessionCoordinator {
     this.#dependencies = dependencies;
   }
 
-  registerSource(
+  #registerSource(
     registration: ModeSessionSourceRegistration,
   ): ModeSessionSourceHandle | undefined {
     const { session } = registration;
@@ -232,19 +232,18 @@ export class ConversationModeSessionCoordinator {
     ) {
       return undefined;
     }
-    const key = sourceKey(registration.sourceId);
+    const key = registration.sourceId;
     const current = this.#sources.get(key);
     if (current && current.generation >= registration.generation) {
       return undefined;
     }
     const activation = (this.#sourceActivations.get(key) ?? 0) + 1;
     this.#sourceActivations.set(key, activation);
-    this.#sessions.set(session.id, session);
     this.#sources.set(key, {
       generation: registration.generation,
       activation,
       session: { id: session.id, mode: session.mode },
-      lifetime: "turn",
+      lifetime: registration.lifetime,
     });
     return {
       sourceId: registration.sourceId,
@@ -258,7 +257,7 @@ export class ConversationModeSessionCoordinator {
   activateSource(
     activation: ModeSessionSourceActivation,
   ): ModeSessionSourceHandle | undefined {
-    const current = this.#sources.get(sourceKey(activation.sourceId));
+    const current = this.#sources.get(activation.sourceId);
     if (current && current.generation === activation.generation) {
       return this.#readActiveSession(current.session.id)
         ? {
@@ -282,23 +281,19 @@ export class ConversationModeSessionCoordinator {
     if (!result.ok || result.session.status !== "active") {
       return undefined;
     }
-    const handle = this.registerSource({
+    return this.#registerSource({
       sourceId: activation.sourceId,
       generation: activation.generation,
       session: result.session,
+      lifetime: activation.lifetime ?? "turn",
     });
-    const registered = this.#sources.get(sourceKey(activation.sourceId));
-    if (registered) {
-      registered.lifetime = activation.lifetime ?? "turn";
-    }
-    return handle;
   }
 
   retireSource(
     source: ModeSessionSourceReference,
     disposition?: ModeSessionTerminalDisposition,
   ): boolean {
-    const key = sourceKey(source.sourceId);
+    const key = source.sourceId;
     const currentSource = this.#sources.get(key);
     if (
       !currentSource ||
@@ -323,11 +318,14 @@ export class ConversationModeSessionCoordinator {
     if (removedWait && !disposition) {
       this.#clearRuntimeState(currentSource.session.id);
     }
-    if (removedWait || disposition) {
-      this.#publishRuntimeChange(currentSource.session.id);
-    }
-    if (disposition) {
-      this.#finalizeRetiredSessionIfSettled(currentSource.session.id);
+    try {
+      if (removedWait || disposition) {
+        this.#publishRuntimeChange(currentSource.session.id);
+      }
+    } finally {
+      if (disposition) {
+        this.#finalizeRetiredSessionIfSettled(currentSource.session.id);
+      }
     }
     return true;
   }
@@ -400,7 +398,7 @@ export class ConversationModeSessionCoordinator {
       return turn.owner;
     }
 
-    const source = this.#sources.get(sourceKey(sourceReference.sourceId));
+    const source = this.#sources.get(sourceReference.sourceId);
     if (
       !source ||
       source.generation !== sourceReference.generation ||
@@ -441,24 +439,36 @@ export class ConversationModeSessionCoordinator {
   }
 
   transferTurn(fromTurnId: string, toTurnId: string): ModeSession | undefined {
-    if (fromTurnId === toTurnId || this.#turns.has(toTurnId)) {
+    if (fromTurnId === toTurnId) {
       return this.#turns.get(toTurnId)?.owner;
     }
     const turn = this.#turns.get(fromTurnId);
+    const destination = this.#turns.get(toTurnId);
     if (!turn?.owner) {
-      return undefined;
+      return destination?.owner;
     }
-    this.#repairTrackedRows(turn);
+    if (destination?.owner && destination.owner.id !== turn.owner.id) {
+      bestEffortModeSessionTracking("handoff origin settlement", () =>
+        this.releaseTurn(fromTurnId, {
+          status: "completed",
+          endReason: "handoff_settled",
+        }),
+      );
+      return destination.owner;
+    }
+    bestEffortModeSessionTracking("handoff origin rows", () =>
+      this.#repairTrackedRows(turn),
+    );
+    const transferred: TurnState = destination ?? { rows: [] };
+    transferred.owner ??= turn.owner;
+    transferred.runtimeState ??= turn.runtimeState;
+    transferred.terminalDisposition ??= turn.terminalDisposition;
+    this.#turns.set(toTurnId, transferred);
     this.#turns.delete(fromTurnId);
-    this.#turns.set(toTurnId, {
-      owner: turn.owner,
-      rows: [],
-      ...(turn.runtimeState ? { runtimeState: turn.runtimeState } : {}),
-      ...(turn.terminalDisposition
-        ? { terminalDisposition: turn.terminalDisposition }
-        : {}),
-    });
-    return turn.owner;
+    bestEffortModeSessionTracking("handoff destination rows", () =>
+      this.#repairTrackedRows(transferred),
+    );
+    return transferred.owner;
   }
 
   getTerminalDisposition(
@@ -525,8 +535,14 @@ export class ConversationModeSessionCoordinator {
     if (this.#hasAssociationForOwner(association.owner.id)) {
       return true;
     }
-    this.#clearRuntimeState(association.owner.id);
-    this.#publishRuntimeChange(association.owner.id);
+    this.#settleStructuralOwner(
+      association.owner.id,
+      {
+        status: "completed",
+        endReason: "structural_wait_abandoned",
+      },
+      true,
+    );
     return true;
   }
 
@@ -541,34 +557,40 @@ export class ConversationModeSessionCoordinator {
     if (this.#hasAssociationForOwner(association.owner.id)) {
       return true;
     }
-    if (this.#hasSourceLifetimeSource(association.owner.id)) {
-      this.#clearRuntimeState(association.owner.id);
-      this.#publishRuntimeChange(association.owner.id);
-      return true;
+    this.#settleStructuralOwner(association.owner.id, disposition);
+    return true;
+  }
+
+  #settleStructuralOwner(
+    sessionId: string,
+    disposition: ModeSessionTerminalDisposition,
+    completeAtLastActivity = false,
+  ): void {
+    if (this.#hasSourceLifetimeSource(sessionId)) {
+      this.#clearRuntimeState(sessionId);
+      this.#publishRuntimeChange(sessionId);
+      return;
     }
-    this.#retiredDispositions.set(association.owner.id, disposition);
+    const existing = this.#retiredDispositions.get(sessionId);
+    this.#retiredDispositions.set(
+      sessionId,
+      existing ?? {
+        ...disposition,
+        completeAtLastActivity,
+      },
+    );
     for (const turn of this.#turns.values()) {
-      if (turn.owner?.id === association.owner.id) {
-        turn.terminalDisposition = disposition;
+      if (turn.owner?.id === sessionId) {
+        turn.terminalDisposition ??= existing ?? disposition;
         turn.runtimeState = "finishing";
       }
     }
-    this.#retireSourcesForOwner(association.owner.id);
-    let settlementError: unknown;
+    this.#retireSourcesForOwner(sessionId);
     try {
-      this.#publishRuntimeChange(association.owner.id);
-    } catch (err) {
-      settlementError = err;
+      this.#publishRuntimeChange(sessionId);
+    } finally {
+      this.#finalizeRetiredSessionIfSettled(sessionId);
     }
-    try {
-      this.#finalizeRetiredSessionIfSettled(association.owner.id);
-    } catch (err) {
-      settlementError ??= err;
-    }
-    if (settlementError) {
-      throw settlementError;
-    }
-    return true;
   }
 
   invalidateAllStructuralWaits(): number {
@@ -579,9 +601,23 @@ export class ConversationModeSessionCoordinator {
     );
     const count = this.#structuralAssociations.size;
     this.#structuralAssociations.clear();
+    let settlementError: unknown;
     for (const ownerId of ownerIds) {
-      this.#clearRuntimeState(ownerId);
-      this.#publishRuntimeChange(ownerId);
+      try {
+        this.#settleStructuralOwner(
+          ownerId,
+          {
+            status: "completed",
+            endReason: "structural_wait_abandoned",
+          },
+          true,
+        );
+      } catch (err) {
+        settlementError ??= err;
+      }
+    }
+    if (settlementError) {
+      throw settlementError;
     }
     return count;
   }
@@ -647,6 +683,18 @@ export class ConversationModeSessionCoordinator {
       }
     }
     const owner = turn?.owner;
+    if (
+      owner &&
+      fallbackDisposition?.status === "interrupted" &&
+      this.#retiredDispositions.get(owner.id)?.status === "completed"
+    ) {
+      this.#retiredDispositions.set(owner.id, fallbackDisposition);
+      for (const currentTurn of this.#turns.values()) {
+        if (currentTurn.owner?.id === owner.id) {
+          currentTurn.terminalDisposition = fallbackDisposition;
+        }
+      }
+    }
     const shouldRetireOwner =
       owner !== undefined &&
       fallbackDisposition !== undefined &&
@@ -687,11 +735,10 @@ export class ConversationModeSessionCoordinator {
     }
   }
 
-  descriptorFor(sessionId: string): ModeSessionDescriptor | undefined {
-    const summary = this.#sessions.get(sessionId);
-    if (!summary) {
-      return undefined;
-    }
+  #descriptorFor(
+    summary: ModeSessionSummary,
+  ): ModeSessionDescriptor | undefined {
+    const sessionId = summary.id;
     if (summary.status !== "active") {
       return { summary };
     }
@@ -708,23 +755,18 @@ export class ConversationModeSessionCoordinator {
     if (!hasOwnedTurn && this.#hasAssociationForOwner(sessionId)) {
       return { summary, runtimeState: "waiting" };
     }
-    return { summary };
+    return hasOwnedTurn || this.#hasEligibleSource(sessionId)
+      ? { summary }
+      : undefined;
   }
 
-  describeSummary(summary: ModeSessionSummary): ModeSessionDescriptor {
+  describeSummary(
+    summary: ModeSessionSummary,
+  ): ModeSessionDescriptor | undefined {
     if (summary.conversationId !== this.#conversationId) {
       return { summary };
     }
-    this.#sessions.set(summary.id, summary);
-    return this.descriptorFor(summary.id) ?? { summary };
-  }
-
-  repairTrackedRows(turnId: string): boolean {
-    const turn = this.#turns.get(turnId);
-    if (!turn?.owner) {
-      return false;
-    }
-    return this.#repairTrackedRows(turn);
+    return this.#descriptorFor(summary);
   }
 
   #readActiveSession(sessionId: string): ModeSessionSummary | null {
@@ -732,14 +774,7 @@ export class ConversationModeSessionCoordinator {
       this.#conversationId,
       sessionId,
     );
-    if (!session || session.status !== "active") {
-      if (session) {
-        this.#sessions.set(session.id, session);
-      }
-      return null;
-    }
-    this.#sessions.set(session.id, session);
-    return session;
+    return session?.status === "active" ? session : null;
   }
 
   #mutateActiveSession(
@@ -753,7 +788,6 @@ export class ConversationModeSessionCoordinator {
     for (let attempt = 0; attempt < 2; attempt += 1) {
       const result = mutate(session);
       if (result.ok) {
-        this.#sessions.set(result.session.id, result.session);
         return true;
       }
       if (
@@ -761,13 +795,9 @@ export class ConversationModeSessionCoordinator {
         !result.session ||
         result.session.status !== "active"
       ) {
-        if (result.session) {
-          this.#sessions.set(result.session.id, result.session);
-        }
         return false;
       }
       session = result.session;
-      this.#sessions.set(session.id, session);
     }
     return false;
   }
@@ -898,7 +928,7 @@ export class ConversationModeSessionCoordinator {
       }
     }
     const endedAt = Date.now();
-    let finalized: boolean;
+    let finalized = false;
     try {
       finalized = this.#mutateActiveSession(sessionId, (session) =>
         this.#dependencies.finalize({
@@ -906,17 +936,29 @@ export class ConversationModeSessionCoordinator {
           conversationId: this.#conversationId,
           expectedRevision: session.revision,
           status: disposition.status,
-          endedAt,
+          endedAt: disposition.completeAtLastActivity
+            ? session.lastActivityAt
+            : endedAt,
           endReason: disposition.endReason,
-          lastActivityAt: endedAt,
+          ...(disposition.completeAtLastActivity
+            ? {}
+            : { lastActivityAt: endedAt }),
         }),
       );
-    } catch (err) {
+    } finally {
       this.#retiredDispositions.delete(sessionId);
-      throw err;
+      if (!finalized) {
+        log.warn(
+          { conversationId: this.#conversationId, sessionId },
+          "Mode-session retirement did not persist a terminal update",
+        );
+        bestEffortModeSessionTracking(
+          "retired session descriptor invalidation",
+          () => this.#dependencies.publishMessagesChanged(this.#conversationId),
+        );
+      }
     }
     if (finalized) {
-      this.#retiredDispositions.delete(sessionId);
       this.#dependencies.publishMessagesChanged(this.#conversationId);
     }
     return finalized;
@@ -964,11 +1006,4 @@ export class ConversationModeSessionCoordinator {
     }
     return advanced;
   }
-}
-
-export function modeSessionStamp(
-  mode: ModeSessionMode,
-  id: string,
-): ModeSession {
-  return { mode, id };
 }

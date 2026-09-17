@@ -3,6 +3,7 @@ import type {
   ConversationModeSessionCoordinator,
   ModeSessionSourceHandle,
 } from "./conversation-mode-session.js";
+import { claimModeSessionTurn } from "./mode-session-tracking.js";
 
 type ModeSessionCoordinator = Pick<
   ConversationModeSessionCoordinator,
@@ -56,8 +57,16 @@ export class ComputerUseModeSessionProducer {
     if (!handle) {
       return undefined;
     }
-    this.#activeHandle = handle;
-    return this.#coordinator.claimTurn(input.turnId, handle, input.at);
+    const owner = claimModeSessionTurn(
+      this.#coordinator,
+      input.turnId,
+      handle,
+      input.at,
+    );
+    if (owner?.id === handle.id) {
+      this.#activeHandle = handle;
+    }
+    return owner;
   }
 
   endTask(input: {

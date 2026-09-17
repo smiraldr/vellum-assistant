@@ -75,6 +75,10 @@ export function subscribeToWindowAttention(
   };
 }
 
+export function supportsWindowAttention(): boolean {
+  return isElectron() && !!window.vellum?.notifications?.onWindowAttention;
+}
+
 /**
  * Whether the desktop window is visible and unminimized, without requiring
  * keyboard focus. Unknown and non-Electron hosts keep foreground work enabled.

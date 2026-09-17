@@ -296,7 +296,7 @@ export async function runDaemon(): Promise<void> {
       validationError: initResult.validationError,
     };
     const modeSessionRecovery = migrationsOk
-      ? recoverModeSessionsBeforeDbReady(migrationFailureDetails)
+      ? recoverModeSessionsBeforeDbReady()
       : null;
     if (modeSessionRecovery?.ok && modeSessionRecovery.interruptedCount > 0) {
       log.info(
@@ -305,25 +305,24 @@ export async function runDaemon(): Promise<void> {
       );
     }
     if (modeSessionRecovery && !modeSessionRecovery.ok) {
-      dbReady = false;
+      log.error(
+        { err: modeSessionRecovery.error },
+        "Mode session recovery failed; tracking is unavailable for this boot",
+      );
     }
-    if (modeSessionRecovery?.ok) {
+    if (migrationsOk) {
       log.info("Daemon startup: DB initialized");
-    } else if (!migrationsOk) {
+    } else {
       setDbMigrationFailed(undefined, migrationFailureDetails);
     }
-    if (!migrationsOk || modeSessionRecovery?.ok === false) {
+    if (!migrationsOk) {
       log.error(
         {
           failedMigrations: initResult.failedMigrations,
           deferredMigrations: initResult.deferredMigrations,
           validationError: initResult.validationError,
-          modeSessionRecoveryError:
-            modeSessionRecovery?.ok === false
-              ? modeSessionRecovery.error
-              : undefined,
         },
-        "Daemon startup: DB migrations or mode session recovery failed; /readyz will remain unready",
+        "Daemon startup: DB migrations failed; /readyz will remain unready",
       );
     }
     // Migrations have settled (successfully or in the failed degraded mode),
@@ -691,11 +690,11 @@ export async function runDaemon(): Promise<void> {
   // blocked.
   startConsentRefresh();
 
-  // Bring up the daemon's CES connection (process + handshake + reconnect
+  // Bring up the assistant's CES connection (process + handshake + reconnect
   // wiring). Blocks up to a 20s timeout so credential reads route through CES
-  // before provider init; non-fatal — falls back to the direct credential store
-  // on failure. The sidecar accepts exactly one bootstrap connection, so this
-  // happens at the process level.
+  // before provider init; non-fatal, falls back to the direct credential store
+  // on failure. CES serves a multi-connection bootstrap socket, so this
+  // happens at the process level and child processes can connect independently.
   await startCes(config);
 
   // Bring up the plugin layer: install the runtime bridge, register the
