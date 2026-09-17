@@ -11,9 +11,14 @@ const BASE: InboxStatusInputs = {
   entitlements: { managed_email: true },
   subscriptionFailed: false,
   addressCount: 1,
+  domainsSettled: true,
 };
 
 describe("resolveInboxStatus", () => {
+  test("loads while the platform gate is still pending", () => {
+    expect(resolveInboxStatus({ ...BASE, gate: "pending" })).toBe("loading");
+  });
+
   test("is unavailable off the platform, whatever else is known", () => {
     expect(resolveInboxStatus({ ...BASE, gate: "gated" })).toBe("unavailable");
     expect(resolveInboxStatus({ ...BASE, gate: "disabled" })).toBe(
@@ -53,8 +58,17 @@ describe("resolveInboxStatus", () => {
     );
   });
 
-  test("setup with no address, ready with one", () => {
-    expect(resolveInboxStatus({ ...BASE, addressCount: 0 })).toBe("setup");
+  test("ready with an address, whatever the domain list says", () => {
     expect(resolveInboxStatus(BASE)).toBe("ready");
+    expect(resolveInboxStatus({ ...BASE, domainsSettled: false })).toBe(
+      "ready",
+    );
+  });
+
+  test("setup only once the domain list has settled", () => {
+    expect(
+      resolveInboxStatus({ ...BASE, addressCount: 0, domainsSettled: false }),
+    ).toBe("loading");
+    expect(resolveInboxStatus({ ...BASE, addressCount: 0 })).toBe("setup");
   });
 });

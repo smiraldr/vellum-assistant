@@ -2,8 +2,10 @@ import { Loader2 } from "lucide-react";
 import { useCallback, useState } from "react";
 import { Navigate, useNavigate } from "react-router";
 
-import { useMutation } from "@tanstack/react-query";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
+import { Button } from "@vellumai/design-library";
+import { Notice } from "@vellumai/design-library/components/notice";
 import { toast } from "@vellumai/design-library/components/toast";
 
 import { useActiveAssistantId } from "@/assistant/use-active-assistant-id";
@@ -18,6 +20,10 @@ import {
   assistantsDomainsCreateMutation,
   assistantsEmailAddressesCreateMutation,
 } from "@/generated/api/@tanstack/react-query.gen";
+import {
+  channelsReadinessGetQueryKey,
+  channelsReadinessRefreshPostMutation,
+} from "@/generated/daemon/@tanstack/react-query.gen";
 import { useTranslation } from "@/i18n";
 import { captureError } from "@/lib/sentry/capture-error";
 import { useAssistantIdentityStore } from "@/stores/assistant-identity-store";
@@ -77,6 +83,28 @@ function Mailbox({
     return <InboxLoading label={t("assistantInboxRoute.loading")} />;
   }
 
+  if (mail.isError) {
+    /* A failed read is not an empty folder: say so, and offer the retry,
+       rather than draw a mailbox with nothing in it. */
+    return (
+      <AssistantInboxShell>
+        <div className="flex flex-1 items-start justify-center p-6">
+          <Notice
+            tone="error"
+            className="max-w-md"
+            actions={
+              <Button variant="outlined" size="compact" onClick={mail.retry}>
+                {t("assistantInboxRoute.retry")}
+              </Button>
+            }
+          >
+            {t("assistantInboxRoute.mailFailed")}
+          </Notice>
+        </div>
+      </AssistantInboxShell>
+    );
+  }
+
   return (
     <AssistantInboxPage
       assistantId={assistantId}
@@ -95,12 +123,17 @@ function Mailbox({
  * `/assistant/inbox`. Picks the inbox's state for the active assistant and
  * draws it: the upgrade card, the setup card, or the mailbox. Behind the
  * `assistant-inbox` flag; with it off the route sends the user to chat, so
- * a stale link never opens a surface the rail does not offer.
+ * a stale link never opens a surface the rail does not offer. The redirect
+ * waits for the flag store to hydrate and the platform session to settle:
+ * on a cold load both start out answering "no", and bouncing on those
+ * defaults would send a remotely enabled user away from their own inbox.
  */
 export function AssistantInboxPageRoute() {
   const { t } = useTranslation("assistant-inbox");
+  const flagsHydrated = useClientFeatureFlagStore.use.hydrated();
   const enabled = useClientFeatureFlagStore.use.assistantInbox();
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const assistantId = useActiveAssistantId();
   const identityName = useAssistantIdentityStore.use.name();
   const state = useAssistantInboxState(assistantId, identityName ?? "");
@@ -108,6 +141,29 @@ export function AssistantInboxPageRoute() {
 
   const createDomain = useMutation(assistantsDomainsCreateMutation());
   const createAddress = useMutation(assistantsEmailAddressesCreateMutation());
+  const refreshReadiness = useMutation(channelsReadinessRefreshPostMutation());
+
+  /* The daemon caches whether email is connected for up to its remote-check
+     TTL, so after a registration the Channels page could still say "not
+     connected" for minutes. The channels page's own registration path posts
+     this refresh for that reason, and this second path does the same.
+     Keyed on the active id, which is what the daemon readiness query is
+     cached under. Best effort: the readiness poll converges on its own. */
+  const refreshReadinessMutateAsync = refreshReadiness.mutateAsync;
+  const refreshChannelReadiness = useCallback(() => {
+    void refreshReadinessMutateAsync({
+      path: { assistant_id: assistantId },
+      body: { channel: "email" },
+    })
+      .catch(() => {})
+      .finally(() => {
+        void queryClient.invalidateQueries({
+          queryKey: channelsReadinessGetQueryKey({
+            path: { assistant_id: assistantId },
+          }),
+        });
+      });
+  }, [assistantId, queryClient, refreshReadinessMutateAsync]);
 
   const confirmSetup = useCallback(
     async ({ prefix }: { prefix: string }) => {
@@ -134,6 +190,7 @@ export function AssistantInboxPageRoute() {
           });
         }
         await state.refreshAddresses();
+        refreshChannelReadiness();
         toast.success(
           t("assistantInboxRoute.setupSucceeded", {
             address: `${prefix}@${state.handle}.${state.rootDomain}`,
@@ -152,9 +209,12 @@ export function AssistantInboxPageRoute() {
         setSettling(false);
       }
     },
-    [createAddress, createDomain, state, t],
+    [createAddress, createDomain, refreshChannelReadiness, state, t],
   );
 
+  if (!flagsHydrated) {
+    return <InboxLoading label={t("assistantInboxRoute.loading")} />;
+  }
   if (!enabled) {
     return <Navigate to="/" replace />;
   }

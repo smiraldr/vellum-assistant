@@ -47,6 +47,14 @@ export interface InboxMail {
   sent: InboxEmail[];
   usage: InboxUsage | undefined;
   isLoading: boolean;
+  /**
+   * Either folder's list failed and nothing is cached for it. An empty
+   * folder and a failed read are different things, so the page never draws
+   * the first for the second.
+   */
+  isError: boolean;
+  /** Re-run whichever list reads failed. */
+  retry: () => void;
   loadDetail: EmailDetailLoader;
 }
 
@@ -125,11 +133,24 @@ export function useInboxMail(
     [assistantId],
   );
 
+  const retry = useCallback(() => {
+    if (receivedQuery.isError) {
+      void receivedQuery.refetch();
+    }
+    if (sentQuery.isError) {
+      void sentQuery.refetch();
+    }
+  }, [receivedQuery, sentQuery]);
+
   return {
     received,
     sent,
     usage,
     isLoading: receivedQuery.isPending || sentQuery.isPending,
+    isError:
+      (receivedQuery.isError && receivedQuery.data === undefined) ||
+      (sentQuery.isError && sentQuery.data === undefined),
+    retry,
     loadDetail,
   };
 }

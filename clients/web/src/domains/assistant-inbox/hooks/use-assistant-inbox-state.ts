@@ -11,7 +11,7 @@ import {
 } from "@/generated/api/@tanstack/react-query.gen";
 import { useIsOrgReady } from "@/hooks/use-is-org-ready";
 import { usePlatformAssistantId } from "@/hooks/use-platform-assistant-id";
-import { usePlatformGate } from "@/hooks/use-platform-gate";
+import { usePlatformGateWithPending } from "@/hooks/use-platform-gate";
 import { useEnvironmentStore } from "@/stores/environment-store";
 
 import { resolveInboxStatus, type InboxStatus } from "../resolve-inbox-status";
@@ -48,7 +48,7 @@ export function useAssistantInboxState(
   fallbackName: string,
 ): AssistantInboxState {
   const queryClient = useQueryClient();
-  const gate = usePlatformGate({ platformHostedOnly: true });
+  const gate = usePlatformGateWithPending({ platformHostedOnly: true });
   const onPlatform = gate === "full" && !!assistantId;
   const orgReady = useIsOrgReady();
   const rootDomain = useEnvironmentStore.use.emailRootDomain();
@@ -118,6 +118,7 @@ export function useAssistantInboxState(
       entitlements,
       subscriptionFailed,
       addressCount: addresses?.length,
+      domainsSettled: domainsQuery.isFetched,
     }),
     platformAssistantId,
     assistantName: listed?.name || fallbackName,
