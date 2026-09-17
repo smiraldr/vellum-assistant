@@ -58,6 +58,11 @@ export interface DataTableProps {
   caption?: string;
   /** Row selection, when the table is a choice rather than a readout. */
   selection?: DataTableSelection;
+  /**
+   * Draws a cell's text. Defaults to the text itself in the table's body
+   * type; a consumer whose cells are machine values passes `MachineText`.
+   */
+  renderCell?: (text: string) => ReactNode;
 }
 
 function cellText(cell: DataTableCell | undefined): string {
@@ -92,11 +97,16 @@ function widthStyle(column: DataTableColumn) {
   return column.width ? { width: `${column.width}px` } : undefined;
 }
 
+function renderPlainCell(text: string): ReactNode {
+  return text;
+}
+
 export function DataTable({
   columns,
   rows,
   caption,
   selection,
+  renderCell = renderPlainCell,
 }: DataTableProps) {
   const { t } = useTranslation("chat");
   const { copy, copied } = useCopyToClipboard({
@@ -168,10 +178,10 @@ export function DataTable({
                       {typeof cell === "object" && cell.icon ? (
                         <span className="flex items-center gap-1.5">
                           {cell.icon}
-                          {cell.text}
+                          {renderCell(cell.text)}
                         </span>
                       ) : (
-                        cellText(cell)
+                        renderCell(cellText(cell))
                       )}
                     </TableCell>
                   );

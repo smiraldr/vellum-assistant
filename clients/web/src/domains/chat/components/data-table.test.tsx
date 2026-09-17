@@ -87,6 +87,17 @@ describe("DataTable", () => {
     );
   });
 
+  test("renderCell draws every cell's text, plain and rich alike", () => {
+    render(
+      <DataTable
+        columns={COLUMNS}
+        rows={ROWS}
+        renderCell={(text) => <em data-testid="cell-text">{text}</em>}
+      />,
+    );
+    expect(screen.getAllByTestId("cell-text")).toHaveLength(4);
+  });
+
   test("the caption renders under the table when given", () => {
     render(
       <DataTable columns={COLUMNS} rows={ROWS} caption="Weekly actives" />,
