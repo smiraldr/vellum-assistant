@@ -1,11 +1,13 @@
 /**
  * Open a CES RPC client over the shared bootstrap socket.
  *
- * Assistant boot (`startCes`) and child-process credential resolution
- * (`tryLazyCesConnect`) use this helper. Both are CES API clients: they
- * discover `ces.sock`, connect, handshake, and reconnect with the same
- * process manager. Handshake identity (assistant API key) is optional so
- * the assistant can forward it at boot while children connect without it.
+ * Assistant boot and child-process credential reads use this helper. Both
+ * are CES API clients: discover `ces.sock`, connect, handshake, reconnect.
+ *
+ * They stay two entry points because boot must load handshake identity
+ * without talking to CES, then hand that identity to CES. Children open a
+ * session only when this process has not already claimed one (no live
+ * client and no reconnect owner).
  */
 
 import type { AssistantConfig } from "../config/schema.js";
@@ -97,4 +99,17 @@ export async function openCesRpcSession(
     }
     return fail();
   }
+}
+
+/**
+ * Stop the current transport and open a new session on the same process
+ * manager. Used by assistant boot and child-process reconnect callbacks.
+ */
+export async function reconnectCesRpcSession(
+  processManager: CesProcessManager,
+  handshake?: CesClientHandshakeOptions,
+): Promise<CesClient | undefined> {
+  await processManager.stop();
+  const session = await openCesRpcSession({ processManager, handshake });
+  return session?.client;
 }

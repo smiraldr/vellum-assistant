@@ -4,7 +4,7 @@
  */
 import { describe, expect, test } from "bun:test";
 
-import { openCesRpcSession } from "./ces-connect.js";
+import { openCesRpcSession, reconnectCesRpcSession } from "./ces-connect.js";
 import { createCesProcessManager } from "./process-manager.js";
 
 describe("openCesRpcSession", () => {
@@ -51,5 +51,19 @@ describe("openCesRpcSession", () => {
     });
 
     expect(session).toBeUndefined();
+  });
+
+  test("reconnectCesRpcSession stops the manager and returns undefined when discovery fails", async () => {
+    const pm = createCesProcessManager({
+      discover: async () => ({
+        mode: "unavailable",
+        reason: "missing test socket",
+      }),
+    });
+
+    const client = await reconnectCesRpcSession(pm);
+
+    expect(client).toBeUndefined();
+    expect(pm.isRunning()).toBe(false);
   });
 });

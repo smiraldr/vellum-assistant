@@ -5,8 +5,9 @@
  * Backend selection (`resolveBackendAsync`) is the single async decision point:
  *   1. CES RPC (primary) - connect to the CES bootstrap socket and talk RPC.
  *      `openCesRpcSession` is the one client constructor. The assistant
- *      opens a session at boot (`startCes`); child processes open a session
- *      on first credential read. Both inject the client via `setCesClient`.
+ *      claims session ownership at boot (`startCes`) and hands CES the
+ *      assistant API key. Child processes open a session on first credential
+ *      read only when this process has no client and no reconnect owner.
  *   2. CES HTTP - containerized failover when IPC is unavailable
  *      (`IS_CONTAINERIZED` + `CES_CREDENTIAL_URL`). Used if the assistant's
  *      bootstrap RPC transport is down, or if a process with HTTP env could
@@ -29,7 +30,10 @@ import type {
 } from "@vellumai/credential-storage";
 
 import { getIsContainerized } from "../config/env-registry.js";
-import { openCesRpcSession } from "../credential-execution/ces-connect.js";
+import {
+  openCesRpcSession,
+  reconnectCesRpcSession,
+} from "../credential-execution/ces-connect.js";
 import { type CesClient } from "../credential-execution/client.js";
 import { discoverCes } from "../credential-execution/executable-discovery.js";
 import { getAnyProviderEnvVar } from "../providers/provider-env-vars.js";
@@ -443,14 +447,11 @@ async function tryLazyCesConnect(): Promise<CesClient | undefined> {
     );
     setCesClient(session.client);
     setCesReconnect(async () => {
-      await session.processManager.stop();
-      const again = await openCesRpcSession({
-        processManager: session.processManager,
-      });
-      if (again) {
+      const client = await reconnectCesRpcSession(session.processManager);
+      if (client) {
         log.info("CES RPC reconnection successful");
       }
-      return again?.client;
+      return client;
     });
     return session.client;
   })();
@@ -463,11 +464,10 @@ async function tryLazyCesConnect(): Promise<CesClient | undefined> {
 }
 
 async function doResolveBackend(): Promise<CredentialBackend> {
-  // 1. CES RPC. Primary credential backend in every environment. The
-  //    assistant injects a client at boot; child processes open the same
-  //    session here. Skip the open when `_cesReconnect` is already
-  //    registered: startCes owns that process's session (including
-  //    handshake identity) and a second open would replace it.
+  // 1. CES RPC. Primary credential backend in every environment. Boot
+  //    claims reconnect ownership before it reads handshake identity, so
+  //    that read cannot open a second session. Children open here only
+  //    when this process has no client and no reconnect owner.
   if (_cesClient) {
     const cesRpc = new CesRpcCredentialBackend(_cesClient);
     if (cesRpc.isAvailable()) {

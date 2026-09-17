@@ -9,8 +9,14 @@ import {
   setCesReconnect,
 } from "../security/secure-keys.js";
 import { getLogger } from "../util/logger.js";
-import { openCesRpcSession } from "./ces-connect.js";
-import { type CesClient } from "./client.js";
+import {
+  openCesRpcSession,
+  reconnectCesRpcSession,
+} from "./ces-connect.js";
+import {
+  type CesClient,
+  type CesClientHandshakeOptions,
+} from "./client.js";
 import {
   type CesProcessManager,
   createCesProcessManager,
@@ -49,34 +55,50 @@ interface CesStartupResult {
  * immediately with handles to the in-flight initialization: callers don't
  * need to await this for startup to continue.
  *
- * CES serves a multi-connection Unix socket, so this is called at the
- * process level and child processes may open their own connections.
+ * Claims reconnect ownership before any credential read so boot identity
+ * loading cannot open a second, identity-less session through the child
+ * entry point. CES serves a multi-connection Unix socket, so child
+ * processes in other address spaces still open their own connections.
  */
 function startCesProcess(config: AssistantConfig): CesStartupResult {
   const pm = createCesProcessManager({ assistantConfig: config });
   const abortController = new AbortController();
   let currentClient: CesClient | undefined;
+  let handshake: CesClientHandshakeOptions = {};
+
+  // Own this process's CES session before resolveManagedProxyContext()
+  // reads the API key. That read must not take the child open path.
+  setCesReconnect(async () => {
+    const client = await reconnectCesRpcSession(pm, handshake);
+    if (client) {
+      log.info("CES reconnection handshake accepted");
+    }
+    return client;
+  });
 
   const handshakePromise = (async (): Promise<CesClient | undefined> => {
     try {
       // Resolve the assistant API key so CES can use it for platform
       // credential materialisation. In managed mode the key is provisioned
       // after hatch and stored in the credential store. CES can't read
-      // the env var, so we pass it via the handshake.
+      // the env var, so we pass it via the handshake. Reconnect ownership
+      // is already claimed, so this read uses HTTP or the encrypted store,
+      // not a second RPC session.
       const proxyCtx = await resolveManagedProxyContext();
       if (abortController.signal.aborted) {
         return undefined;
       }
       const assistantId = getPlatformAssistantId();
+      handshake = {
+        ...(proxyCtx.assistantApiKey
+          ? { assistantApiKey: proxyCtx.assistantApiKey }
+          : {}),
+        ...(assistantId ? { assistantId } : {}),
+      };
       const session = await openCesRpcSession({
         processManager: pm,
         signal: abortController.signal,
-        handshake: {
-          ...(proxyCtx.assistantApiKey
-            ? { assistantApiKey: proxyCtx.assistantApiKey }
-            : {}),
-          ...(assistantId ? { assistantId } : {}),
-        },
+        handshake,
       });
       currentClient = session?.client;
       if (session) {
@@ -138,10 +160,10 @@ function updateClientRef(client: CesClient | undefined): void {
 
 /**
  * Open the assistant's CES RPC client: handshake (blocking up to a 20s
- * timeout so credential reads can route through CES before provider init),
- * register the reconnection callback, and keep the live client reference in
- * sync. Non-fatal: on failure the assistant falls back to the direct
- * credential store.
+ * timeout so credential reads can route through CES before provider init)
+ * and keep the live client reference in sync. Reconnect ownership is
+ * claimed before the identity read. Non-fatal: on failure the assistant
+ * falls back to the direct credential store.
  */
 export async function startCes(config: AssistantConfig): Promise<void> {
   const cesResult = startCesProcess(config);
@@ -154,7 +176,7 @@ export async function startCes(config: AssistantConfig): Promise<void> {
       timeoutMs: DEFAULT_CES_STARTUP_TIMEOUT_MS,
       onTimeout: () => {
         log.warn(
-          "CES handshake timed out after 20s — falling back to direct credential store",
+          "CES handshake timed out after 20s, falling back to direct credential store",
         );
       },
     });
@@ -176,43 +198,12 @@ export async function startCes(config: AssistantConfig): Promise<void> {
     }
   }
 
-  // Register CES reconnection callback so the credential layer can re-establish
-  // the connection when the transport dies, instead of falling back to the
-  // encrypted file store.
+  // Reconnect ownership is claimed inside startCesProcess before the
+  // identity read. Snapshotting the API key there (not here) avoids a
+  // second resolveManagedProxyContext() after setCesClient, which would
+  // read the key through CES while reconnecting.
   if (cesResult.processManager) {
     const pm = cesResult.processManager;
-
-    // Snapshot the managed-proxy context and assistant ID at CES startup so the
-    // reconnect closure below never calls back into `resolveManagedProxyContext()`.
-    // That function reads the assistant API key via `getSecureKeyAsync()`, which
-    // — once `setCesClient()` has resolved the backend to CES RPC — routes the
-    // read through CES itself. During a reconnect the old transport is dead and
-    // a new one is being set up by this very closure, so the nested credential
-    // read recursively awaits its own in-flight reconnection and deadlocks until
-    // `CREDENTIAL_OP_TIMEOUT_MS` (45s) fires. That 45-second stall delays every
-    // CES restart and causes dependent credential reads (e.g. Meet's STT
-    // provider resolution) to return `undefined` during the window. API key
-    // rotation uses the `updateAssistantApiKey` RPC on the live client, not a
-    // reconnect, so caching at startup is safe.
-    const startupProxyCtx = await resolveManagedProxyContext();
-    const startupAssistantId = getPlatformAssistantId();
-
-    setCesReconnect(async () => {
-      await pm.stop();
-      const session = await openCesRpcSession({
-        processManager: pm,
-        handshake: {
-          ...(startupProxyCtx.assistantApiKey
-            ? { assistantApiKey: startupProxyCtx.assistantApiKey }
-            : {}),
-          ...(startupAssistantId ? { assistantId: startupAssistantId } : {}),
-        },
-      });
-      if (session) {
-        log.info("CES reconnection handshake accepted");
-      }
-      return session?.client;
-    });
 
     // Proactive reconnect: when the transport dies (socket close, process
     // exit), start a retry-with-backoff loop immediately instead of waiting
