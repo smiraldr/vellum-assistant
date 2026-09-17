@@ -48,13 +48,15 @@ function Checkbox({
     "inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-[4px]",
     "border transition-colors outline-none cursor-pointer",
     "keyboard-focus:ring-2 keyboard-focus:ring-[var(--ring)] keyboard-focus:ring-offset-0",
-    "bg-[var(--surface-lift)] border-[var(--border-base)]",
+    // Unchecked box uses the field fill and element border so it stays
+    // visible on a lift-surface card.
+    "bg-[var(--field-bg)] border-[var(--border-element)]",
     "data-[state=checked]:bg-[var(--primary-active)] data-[state=checked]:border-transparent",
     "data-[state=indeterminate]:bg-[var(--primary-active)] data-[state=indeterminate]:border-transparent",
     "disabled:cursor-not-allowed disabled:bg-[var(--surface-overlay)]",
     "disabled:data-[state=checked]:bg-[var(--surface-overlay)]",
     "disabled:data-[state=indeterminate]:bg-[var(--surface-overlay)]",
-    "disabled:border-[var(--border-base)]",
+    "disabled:border-[var(--border-disabled)]",
   );
 
   const iconClasses = cn(
