@@ -266,6 +266,41 @@ export const SentFolder: Story = {
   ),
 };
 
+/**
+ * Rows as the platform lists them, with no preview, body, or attachments,
+ * and a loader that takes a moment to answer: the shape production runs on.
+ * Open a message to see the pane load the body in.
+ */
+export const InboxFetchedBodies: Story = {
+  name: "3e · Bodies fetched on open",
+  render: () => (
+    <AssistantInboxPage
+      assistantId={ASSISTANT_ID}
+      assistantName={MOCK_ASSISTANT_NAME}
+      address={MOCK_ADDRESS}
+      inbox={MOCK_INBOX.map(
+        ({ snippet: _snippet, body: _body, attachments: _a, ...row }) => row,
+      )}
+      sent={MOCK_SENT.map(
+        ({ snippet: _snippet, body: _body, attachments: _a, ...row }) => row,
+      )}
+      usage={MOCK_USAGE}
+      now={MOCK_NOW}
+      loadDetail={async (email) => {
+        await new Promise((resolve) => setTimeout(resolve, 900));
+        const full = [...MOCK_INBOX, ...MOCK_SENT].find(
+          (candidate) => candidate.id === email.id,
+        );
+        return {
+          body: full?.body ?? "",
+          attachments: full?.attachments ?? [],
+        };
+      }}
+      onAskToReply={fn().mockName("onAskToReply")}
+    />
+  ),
+};
+
 /** The mailbox the moment the address exists and nothing has arrived. */
 export const InboxEmpty: Story = {
   name: "3d · Inbox, empty",

@@ -30,14 +30,17 @@
   },
   "emailListRow": {
     "toPrefix": "To {name}",
-    "attachments": "{count, plural, one {# attachment} other {# attachments}}"
+    "attachments": "{count, plural, one {# attachment} other {# attachments}}",
+    "noSubject": "(no subject)"
   },
   "emailDetail": {
     "from": "From",
     "to": "To",
     "sentBy": "Sent by {name}",
     "attachments": "Attachments",
-    "askToReply": "Ask {name} to reply"
+    "askToReply": "Ask {name} to reply",
+    "loading": "Loading the message…",
+    "loadFailed": "Couldn't load this message."
   },
   "emailAddressFields": {
     "prefixLabel": "Prefix",
@@ -56,5 +59,11 @@
     "title": "Assistant Email",
     "subtitle": "Set up an email for your assistant.",
     "getStarted": "Get started"
+  },
+  "assistantInboxRoute": {
+    "loading": "Opening the inbox…",
+    "setupFailed": "Couldn't set up the address.",
+    "setupSucceeded": "{address} is ready.",
+    "replyPrompt": "Reply to the email with id {id} in your inbox (from {sender}, subject \"{subject}\"). Read it with `assistant email download {id}` first, then draft a reply and show it to me before sending."
   }
 }

@@ -30,14 +30,17 @@
   },
   "emailListRow": {
     "toPrefix": "Кому: {name}",
-    "attachments": "{count, plural, one {# вложение} few {# вложения} many {# вложений} other {# вложения}}"
+    "attachments": "{count, plural, one {# вложение} few {# вложения} many {# вложений} other {# вложения}}",
+    "noSubject": "(без темы)"
   },
   "emailDetail": {
     "from": "От",
     "to": "Кому",
     "sentBy": "Отправлено: {name}",
     "attachments": "Вложения",
-    "askToReply": "Попросить {name} ответить"
+    "askToReply": "Попросить {name} ответить",
+    "loading": "Загружаем письмо…",
+    "loadFailed": "Не удалось загрузить это письмо."
   },
   "emailAddressFields": {
     "prefixLabel": "Префикс",
@@ -56,5 +59,11 @@
     "title": "Почта ассистента",
     "subtitle": "Настройте почту для вашего ассистента.",
     "getStarted": "Начать"
+  },
+  "assistantInboxRoute": {
+    "loading": "Открываем почту…",
+    "setupFailed": "Не удалось настроить адрес.",
+    "setupSucceeded": "Адрес {address} готов.",
+    "replyPrompt": "Ответь на письмо с id {id} из твоей почты (от {sender}, тема \"{subject}\"). Сначала прочитай его командой `assistant email download {id}`, затем подготовь ответ и покажи мне перед отправкой."
   }
 }
