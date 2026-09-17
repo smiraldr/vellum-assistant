@@ -11,7 +11,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { Checkbox } from "./checkbox";
 
 describe("Checkbox rendering", () => {
-  test("unchecked box uses field fill and element border", () => {
+  test("unchecked box uses field fill and tertiary border", () => {
     const html = renderToStaticMarkup(
       <Checkbox
         checked={false}
@@ -21,7 +21,8 @@ describe("Checkbox rendering", () => {
     );
 
     expect(html).toContain("bg-[var(--field-bg)]");
-    expect(html).toContain("border-[var(--border-element)]");
+    expect(html).toContain("border-2");
+    expect(html).toContain("border-[var(--content-tertiary)]");
     expect(html).not.toContain("border-[var(--border-base)]");
     expect(html).toContain("Mark this address verified");
   });
