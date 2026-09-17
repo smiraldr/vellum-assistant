@@ -135,7 +135,10 @@ export function DataTable({
         </button>
       </div>
       {/* The host arbitrates horizontal gestures on the scroll container. */}
-      <Table containerProps={{ "data-owns-horizontal-scroll": "" }}>
+      <Table
+        density="compact"
+        containerProps={{ "data-owns-horizontal-scroll": "" }}
+      >
         {caption && <TableCaption>{caption}</TableCaption>}
         <TableHeader>
           <TableRow>
