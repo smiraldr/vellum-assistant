@@ -9,7 +9,7 @@ import {
 } from "bun:test";
 import { act, cleanup, renderHook } from "@testing-library/react";
 
-import { publish } from "@/lib/event-bus";
+import { publish, subscribe } from "@/lib/event-bus";
 import { publishElectronWindowAttentionSource } from "@/runtime/event-sources/electron-window-attention";
 import { __resetLifecycleEdgeForTests } from "@/runtime/event-sources/lifecycle-edge";
 import { subscribeToWindowAttention } from "@/runtime/window-attention";
@@ -111,46 +111,124 @@ test("starts suspended when an Electron window is already minimized", () => {
   }
 });
 
-test("stops when the first Electron payload reports a minimized window", () => {
-  let sendWindowAttention:
-    ((payload: WindowAttentionPayload) => void) | undefined;
-  window.vellum = {
-    platform: "electron",
-    notifications: {
-      onWindowAttention: (
-        callback: (payload: WindowAttentionPayload) => void,
-      ) => {
-        sendWindowAttention = callback;
-        return () => {
-          sendWindowAttention = undefined;
-        };
+test.each([true, false])(
+  "handles initial Electron visibility locally (enabled=%s)",
+  (enabled) => {
+    let sendWindowAttention:
+      ((payload: WindowAttentionPayload) => void) | undefined;
+    window.vellum = {
+      platform: "electron",
+      notifications: {
+        onWindowAttention: (
+          callback: (payload: WindowAttentionPayload) => void,
+        ) => {
+          sendWindowAttention = callback;
+          return () => {
+            sendWindowAttention = undefined;
+          };
+        },
       },
-    },
-  } as unknown as Window["vellum"];
-  const interval = spyOn(globalThis, "setInterval").mockImplementation(
-    (() => TIMER_ID) as unknown as typeof setInterval,
-  );
-  const clear = spyOn(globalThis, "clearInterval").mockImplementation(() => {});
-  renderHook(() => useSessionDurationClock(true));
-  const stopWindowAttention = publishElectronWindowAttentionSource();
-
-  try {
-    expect(interval).toHaveBeenCalledTimes(1);
-
-    act(() =>
-      sendWindowAttention?.({
-        visible: true,
-        focused: false,
-        minimized: true,
-      }),
+    } as unknown as Window["vellum"];
+    let tick: (() => void) | undefined;
+    const interval = spyOn(globalThis, "setInterval").mockImplementation(((
+      callback: TimerHandler,
+    ) => {
+      tick = callback as () => void;
+      return TIMER_ID;
+    }) as unknown as typeof setInterval);
+    const clear = spyOn(globalThis, "clearInterval").mockImplementation(
+      () => {},
     );
+    const { result } = renderHook(() => useSessionDurationClock(enabled));
+    const onHidden = mock(() => {});
+    const unsubscribeHidden = subscribe("app.hidden", onHidden);
+    const stopWindowAttention = publishElectronWindowAttentionSource();
 
-    expect(clear).toHaveBeenCalledTimes(1);
-  } finally {
-    stopWindowAttention();
-    delete window.vellum;
-  }
-});
+    try {
+      expect(interval).toHaveBeenCalledTimes(enabled ? 1 : 0);
+
+      act(() =>
+        sendWindowAttention?.({
+          minimized: null,
+        } as unknown as WindowAttentionPayload),
+      );
+      act(() => tick?.());
+      expect(clear).not.toHaveBeenCalled();
+      act(() =>
+        sendWindowAttention?.({
+          visible: true,
+          focused: false,
+          minimized: true,
+        }),
+      );
+
+      expect(onHidden).not.toHaveBeenCalled();
+      act(() => tick?.());
+      expect(clear).toHaveBeenCalledTimes(enabled ? 1 : 0);
+
+      setSystemTime(new Date(START + 5_000));
+      act(() =>
+        sendWindowAttention?.({
+          visible: true,
+          focused: false,
+          minimized: false,
+        }),
+      );
+      expect(result.current).toBe(enabled ? START + 5_000 : null);
+      expect(interval).toHaveBeenCalledTimes(enabled ? 2 : 0);
+
+      act(() =>
+        sendWindowAttention?.({
+          visible: true,
+          focused: true,
+          minimized: false,
+        }),
+      );
+      act(() =>
+        sendWindowAttention?.({
+          visible: true,
+          focused: false,
+          minimized: false,
+        }),
+      );
+      expect(interval).toHaveBeenCalledTimes(enabled ? 2 : 0);
+      expect(clear).toHaveBeenCalledTimes(enabled ? 1 : 0);
+
+      act(() =>
+        sendWindowAttention?.({
+          visible: true,
+          focused: true,
+          minimized: false,
+        }),
+      );
+      act(() =>
+        sendWindowAttention?.({
+          minimized: null,
+        } as unknown as WindowAttentionPayload),
+      );
+      setSystemTime(new Date(START + 10_000));
+      act(() => tick?.());
+      expect(clear).toHaveBeenCalledTimes(enabled ? 1 : 0);
+      expect(result.current).toBe(enabled ? START + 10_000 : null);
+      act(() =>
+        sendWindowAttention?.({
+          visible: true,
+          focused: false,
+          minimized: false,
+        }),
+      );
+      setSystemTime(new Date(START + 15_000));
+      act(() => tick?.());
+      expect(result.current).toBe(enabled ? START + 15_000 : null);
+      expect(interval).toHaveBeenCalledTimes(enabled ? 2 : 0);
+      expect(onHidden).not.toHaveBeenCalled();
+    } finally {
+      stopWindowAttention();
+      unsubscribeHidden();
+      delete window.vellum;
+    }
+  },
+);
 
 test("shares one interval across enabled summaries", () => {
   let tick: (() => void) | undefined;

@@ -29,18 +29,30 @@ function stopClock(): void {
 
 function startClock(): void {
   if (intervalId === null && listeners.size > 0 && appVisible) {
-    intervalId = setInterval(publishCurrentTime, TICK_INTERVAL_MS);
+    intervalId = setInterval(() => {
+      if (!readAppVisible()) {
+        appVisible = false;
+        stopClock();
+        return;
+      }
+      publishCurrentTime();
+    }, TICK_INTERVAL_MS);
   }
+}
+
+function readAppVisible(): boolean {
+  return (
+    (typeof document === "undefined" ||
+      document.visibilityState !== "hidden") &&
+    isWindowOnScreen()
+  );
 }
 
 function subscribeLifecycle(): void {
   if (lifecycleUnsubscribes) {
     return;
   }
-  appVisible =
-    (typeof document === "undefined" ||
-      document.visibilityState !== "hidden") &&
-    isWindowOnScreen();
+  appVisible = readAppVisible();
   lifecycleUnsubscribes = [
     subscribe("app.hidden", () => {
       appVisible = false;

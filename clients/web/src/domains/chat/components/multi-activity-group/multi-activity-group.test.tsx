@@ -63,7 +63,10 @@ afterEach(() => {
     expandedCardIds: new Map(),
     expandedToolCallIds: new Set(),
   });
-  useAssistantFeatureFlagStore.setState({ sendUserMessage: false });
+  useAssistantFeatureFlagStore.setState({
+    sendUserMessage: false,
+    sessionGroups: false,
+  });
 });
 
 function makeToolCall(
@@ -102,9 +105,10 @@ describe("MultiActivityGroup — non-web tool group", () => {
       renderCard(toolCalls);
     // The unified group mounts the shared shell wrapper.
     expect(getByTestId("tool-progress-card-shell")).toBeTruthy();
-    // The header keeps the stable Working phase title and uses the localized
-    // terminal action label. Raw command detail remains in the steps panel.
+    // The phase title stays stable while the action wording follows the flag.
     expect(getByText("Working")).toBeTruthy();
+    expect(getByText("git status")).toBeTruthy();
+    act(() => useAssistantFeatureFlagStore.setState({ sessionGroups: true }));
     expect(getByText("Running a command")).toBeTruthy();
     expect(getByRole("button", { name: /view steps/i })).toBeTruthy();
     expect(queryByTestId("tool-step-pill")).toBeNull();
@@ -114,6 +118,7 @@ describe("MultiActivityGroup — non-web tool group", () => {
   });
 
   test("carousels the live step in the header while streaming", () => {
+    useAssistantFeatureFlagStore.setState({ sessionGroups: true });
     const toolCalls = [
       makeToolCall({
         id: "tc-1",
@@ -749,9 +754,9 @@ describe("MultiActivityGroup — header reflects the latest step", () => {
       { kind: "toolCall", toolCall: toolCalls[0]! },
     ];
     const { getByText, queryByText } = renderCard(toolCalls, { items });
-    // The header keeps the stable Working phase and localized action label.
+    // The disabled feature keeps the stable Working phase and command detail.
     expect(getByText("Working")).toBeTruthy();
-    expect(getByText("Running a command")).toBeTruthy();
+    expect(getByText("echo hi")).toBeTruthy();
     // The leading thinking text is NOT promoted into the header (it's a
     // panel step only).
     expect(queryByText("Let me check the directory first.")).toBeNull();

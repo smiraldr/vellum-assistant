@@ -85,7 +85,7 @@ describe("publishElectronWindowAttentionSource", () => {
     ]);
   });
 
-  test("publishes app.hidden when the first payload is off screen", () => {
+  test("seeds the off-screen baseline without a boot-time hidden edge", () => {
     installBridge();
     start();
 
@@ -93,7 +93,6 @@ describe("publishElectronWindowAttentionSource", () => {
 
     expect(publishSpy.mock.calls).toEqual([
       ["app.attention", { attended: false }],
-      ["app.hidden", { signal: "window_attention" }],
     ]);
   });
 

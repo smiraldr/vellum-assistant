@@ -70,6 +70,9 @@ accepted work. Live voice snapshots the flag when its socket session is
 created: disabled sessions retain the existing camera transport without
 advertising or preparing tracked sight-session epochs.
 
+The same flag controls activity-label wording at the shared rendering
+boundary. Disabled views retain their existing labels and phase grouping.
+
 The migration, startup recovery, persisted message stamps, and history reads
 remain available while the flag is off. This keeps records made by an enabled
 cohort compatible with rollback and later re-enablement.
@@ -174,5 +177,7 @@ descriptor store, session event stream, or polling endpoint.
 The transcript keeps lightweight segment identities for stable disclosure keys,
 not duplicate message bodies. Closed children unmount, and eligible mounted
 headers share one coarse clock that pauses while the app is hidden. No header
-visibility observer is required. With grouping disabled, the load-older guard
-uses the ordinary flat-transcript behavior and skips grouped DOM scans.
+visibility observer is required. The clock reads initial desktop visibility
+from the existing attention state on its coarse tick, without publishing a
+shared lifecycle edge. With grouping disabled, the load-older guard uses the
+ordinary flat-transcript behavior and skips grouped DOM scans.

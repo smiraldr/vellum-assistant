@@ -44,8 +44,12 @@ const { useChatSessionStore } =
   await import("@/domains/chat/chat-session-store");
 const { useTurnStore } = await import("@/domains/chat/turn-store");
 
+const { useAssistantFeatureFlagStore } =
+  await import("@/stores/assistant-feature-flag-store");
+
 afterEach(() => {
   cleanup();
+  useAssistantFeatureFlagStore.setState({ sessionGroups: false });
   useTurnStore.setState({ phase: "idle" });
   useChatSessionStore.setState({ snapshot: null, optimisticSends: [] });
 });
@@ -427,6 +431,8 @@ describe("ActivityStepsPanel - computer screenshot gallery", () => {
     ]);
 
     expect(getAllByTestId("phase-header")).toHaveLength(1);
+    expect(getByText("assistant browser click #submit")).toBeTruthy();
+    act(() => useAssistantFeatureFlagStore.setState({ sessionGroups: true }));
     expect(getByText("Clicking")).toBeTruthy();
     expect(getAllByTestId("activity-screenshot-tile")).toHaveLength(1);
     const tile = getByRole("button", {

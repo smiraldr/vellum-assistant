@@ -31,7 +31,7 @@ import type { ChatMessageToolCall } from "@/domains/chat/api/event-types";
 import { truncate } from "@/domains/chat/utils/truncate";
 import { isToolCallRunning } from "@/domains/chat/utils/tool-call-status";
 import { Trans, useTranslation } from "@/i18n";
-import { resolveActionDisplayLabel } from "@/domains/chat/components/tool-progress-card/action-display-label";
+import { useActionDisplayLabel } from "@/domains/chat/components/tool-progress-card/action-display-label";
 
 /**
  * Hard character cap for the thinking text shown in the collapsed header's
@@ -352,6 +352,7 @@ function UnifiedMultiActivityGroup(
     active,
   } = props;
   const { t } = useTranslation("chat");
+  const resolveActionDisplayLabel = useActionDisplayLabel();
   const toggleActivitySteps = useViewerStore.use.toggleActivitySteps();
   const mainView = useViewerStore.use.mainView();
   const activeActivitySteps = useViewerStore.use.activeActivitySteps();
@@ -414,18 +415,15 @@ function UnifiedMultiActivityGroup(
         </span>
       );
     }
-    return resolveActionDisplayLabel(
-      {
-        actionDisplayKey: cardData.currentStepActionDisplayKey,
-        fallback: cardData.currentStepInfo,
-      },
-      t,
-    );
+    return resolveActionDisplayLabel({
+      actionDisplayKey: cardData.currentStepActionDisplayKey,
+      fallback: cardData.currentStepInfo,
+    });
   }, [
     cardData.currentStepActionDisplayKey,
     cardData.currentStepInfo,
     cardData.currentStepKind,
-    t,
+    resolveActionDisplayLabel,
   ]);
 
   // Nudge rows need the raw call (riskLevel, allowlistOptions, …) which isn't

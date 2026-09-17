@@ -65,7 +65,9 @@ export function subscribeToWindowAttention(
       const parsed = windowAttentionPayloadSchema.safeParse(payload);
       const next = parsed.success ? parsed.data : null;
       attended = isAttendedPayload(next);
-      onScreen = next !== null && next.visible && !next.minimized;
+      if (next !== null) {
+        onScreen = next.visible && !next.minimized;
+      }
       callback(next);
     }) ?? (() => undefined);
   return () => {

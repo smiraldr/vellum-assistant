@@ -182,14 +182,23 @@ describe("isVisibleToUser", () => {
 });
 
 describe("isWindowOnScreen", () => {
-  test("tracks visibility without treating lost focus as hidden", () => {
+  test("tracks valid visibility without treating focus or malformed payloads as changes", () => {
     installBridge();
     unsubscribe = subscribeToWindowAttention(() => undefined);
+
+    send({ minimized: null });
+    expect(isWindowOnScreen()).toBe(true);
 
     send({ visible: true, focused: false, minimized: false });
     expect(isWindowOnScreen()).toBe(true);
 
+    send({ minimized: null });
+    expect(isWindowOnScreen()).toBe(true);
+
     send({ visible: true, focused: true, minimized: true });
+    expect(isWindowOnScreen()).toBe(false);
+
+    send({ minimized: null });
     expect(isWindowOnScreen()).toBe(false);
   });
 });
