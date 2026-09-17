@@ -1,17 +1,22 @@
 /**
- * Draws the parameter layout `layoutToolParams` decides: each field a small
- * label above its value, long text as a code block, and larger structure
- * nested in a bordered group.
+ * Draws the parameter layout `layoutValues` decides: each field a small label
+ * above its value, long text as a code block, a list of records as a table,
+ * and larger structure nested in a bordered group.
  */
 
 import { Typography } from "@vellumai/design-library";
 import type { ReactNode } from "react";
 
 import { CodeBlock, MachineText } from "@/components/detail-primitives";
+import {
+  DataTable,
+  type DataTableColumn,
+  type DataTableRow,
+} from "@/domains/chat/components/data-table";
 import type {
-  ToolParamField,
-  ToolParamFieldList,
-} from "@/domains/chat/utils/tool-param-layout";
+  ValueField,
+  ValueFieldList,
+} from "@/domains/chat/utils/value-layout";
 import { currentLocale, useTranslation } from "@/i18n";
 import { cn } from "@/utils/misc";
 
@@ -33,7 +38,42 @@ function ValueText({ children }: { children: ReactNode }) {
   );
 }
 
-function FieldValue({ field }: { field: ToolParamField }) {
+/** How many children or rows the layout left out, pointing at the raw input. */
+function MoreInRawInput({ count }: { count: number }) {
+  const { t } = useTranslation("chat");
+  return (
+    <Typography
+      variant="body-small-default"
+      as="p"
+      className="text-[var(--content-tertiary)]"
+    >
+      {t("toolParamFields.moreCount", { count })}
+    </Typography>
+  );
+}
+
+/**
+ * A table field's columns and rows as `DataTable` props. Columns are keyed by
+ * position rather than name, since a `{ columns, rows }` result can name two
+ * columns alike.
+ */
+function tableProps(field: Extract<ValueField, { kind: "table" }>): {
+  columns: DataTableColumn[];
+  rows: DataTableRow[];
+} {
+  return {
+    columns: field.columns.map((label, index) => ({
+      id: String(index),
+      label,
+    })),
+    rows: field.rows.map((cells, index) => ({
+      id: String(index),
+      cells: Object.fromEntries(cells.map((cell, i) => [String(i), cell])),
+    })),
+  };
+}
+
+function FieldValue({ field }: { field: ValueField }) {
   switch (field.kind) {
     case "text":
       return <ValueText>{field.text}</ValueText>;
@@ -63,13 +103,20 @@ function FieldValue({ field }: { field: ToolParamField }) {
           ))}
         </span>
       );
+    case "table":
+      return (
+        <div className="mt-1 flex min-w-0 flex-col gap-2">
+          <DataTable {...tableProps(field)} />
+          {field.more > 0 && <MoreInRawInput count={field.more} />}
+        </div>
+      );
     case "nested":
       return <ToolParamFields list={field.fields} nested />;
   }
 }
 
 interface ToolParamFieldsProps {
-  list: ToolParamFieldList;
+  list: ValueFieldList;
   /** Draws the fields as a bordered group, for a list or object inside. */
   nested?: boolean;
 }
@@ -78,7 +125,6 @@ export function ToolParamFields({
   list,
   nested = false,
 }: ToolParamFieldsProps) {
-  const { t } = useTranslation("chat");
   const gap = nested ? "gap-2.5" : "gap-3";
 
   return (
@@ -102,15 +148,7 @@ export function ToolParamFields({
           </div>
         ))}
       </dl>
-      {list.more > 0 && (
-        <Typography
-          variant="body-small-default"
-          as="p"
-          className="text-[var(--content-tertiary)]"
-        >
-          {t("toolParamFields.moreCount", { count: list.more })}
-        </Typography>
-      )}
+      {list.more > 0 && <MoreInRawInput count={list.more} />}
     </div>
   );
 }
