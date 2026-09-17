@@ -92,7 +92,11 @@ describe("resolveModelFirstGroups", () => {
   });
 
   test("omits structured-decision providers from the section list", () => {
+    expect(groupLabels([])).not.toContain("TypeSafe");
     expect(groupLabels([])).not.toContain("Jev");
+    expect(groupLabels([connection("jev-key", "jev")])).not.toContain(
+      "TypeSafe",
+    );
     expect(groupLabels([connection("jev-key", "jev")])).not.toContain("Jev");
   });
 

@@ -68,6 +68,21 @@ describe("isDispatchableProfile", () => {
     ).toBe(false);
   });
 
+  test("true for a structured-decision profile when text is not required", () => {
+    expect(
+      isDispatchableProfile(
+        {
+          name: "jev",
+          label: "Jev",
+          provider: "jev",
+          model: "jev-latest",
+        },
+        profiles,
+        { requireOwnProviderAndModel: true, requireTextGeneration: false },
+      ),
+    ).toBe(true);
+  });
+
   test("false when either half of the pair is missing", () => {
     expect(
       isDispatchableProfile(
@@ -244,6 +259,24 @@ describe("visibleProfilesForPicker", () => {
     ).not.toContain("jev");
     expect(
       visibleProfilesForPicker(withJev, ["jev"], STRICT).map((p) => p.name),
+    ).toContain("jev");
+  });
+
+  test("offers a structured-decision profile when text is not required", () => {
+    const withJev: ProfilePickerEntry[] = [
+      ...profiles,
+      {
+        name: "jev",
+        label: "Jev",
+        provider: "jev",
+        model: "jev-latest",
+      },
+    ];
+    expect(
+      visibleProfilesForPicker(withJev, [], {
+        requireOwnProviderAndModel: true,
+        requireTextGeneration: false,
+      }).map((p) => p.name),
     ).toContain("jev");
   });
 });

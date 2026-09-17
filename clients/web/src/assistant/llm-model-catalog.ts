@@ -38,7 +38,8 @@ export interface LlmCatalogModel {
   /**
    * Whether the model produces free-form chat text. Omit (or true) for
    * ordinary chat models. False for structured-decision models that stay
-   * out of conversation pickers.
+   * out of conversation pickers. They can still back a saved profile and a
+   * call-site pin.
    */
   supportsText?: boolean;
   longContextPricingThresholdTokens?: number;
@@ -1224,7 +1225,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   opencode: "OpenCode",
   baseten: "Baseten",
   poolside: "Poolside",
-  jev: "Jev",
+  jev: "TypeSafe",
 };
 
 /**
@@ -1422,7 +1423,7 @@ export function catalogModelSupportsText(
   return model?.supportsText !== false;
 }
 
-/** Visible catalog models that can back a conversation or call-site pin. */
+/** Visible catalog models that can back a conversation pin. */
 export function getTextGenerationModelsForProvider(
   provider: string,
   enabledFlags: Readonly<Record<string, boolean>>,

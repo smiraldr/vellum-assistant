@@ -77,7 +77,7 @@ const PROVIDER_LABELS: Record<LlmProviderId, string> = {
   opencode: "OpenCode",
   baseten: "Baseten",
   poolside: "Poolside",
-  jev: "Jev",
+  jev: "TypeSafe",
 };
 
 // litellm and opencode are deliberately excluded: they have no fixed default

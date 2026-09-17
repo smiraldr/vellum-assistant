@@ -77,7 +77,8 @@ export interface CatalogModel {
    * Whether the model produces free-form chat text. Omit (or true) for
    * ordinary chat models. False for structured-decision models that return
    * answers rather than generated text; those stay out of conversation
-   * pickers and cannot be the conversation model.
+   * pickers and cannot be the conversation model. They can still back a
+   * saved profile and a call-site pin.
    */
   supportsText?: boolean;
   supportsEffort?: boolean;
@@ -2533,7 +2534,7 @@ const RAW_PROVIDER_CATALOG: ProviderCatalogEntry[] = [
   },
   {
     id: "jev",
-    displayName: "Jev",
+    displayName: "TypeSafe",
     subtitle:
       "TypeSafe System One decision model. Returns structured answers, not generated text. Requires a TypeSafe API key.",
     setupMode: "api-key",
