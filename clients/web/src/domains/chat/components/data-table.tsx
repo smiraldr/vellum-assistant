@@ -1,16 +1,25 @@
 /**
- * A table of rows under column headers, with a copy-as-markdown control and
- * optional row selection. Presentational: it draws what it is given and owns
- * its own prop types, so a consumer maps its data (a `ui_show` table surface,
- * a tool result) to these props at its own boundary.
+ * A table of rows under column headers, drawn with the design library's
+ * `Table`, with a copy-as-markdown control and optional row selection.
+ * Presentational: it draws what it is given and owns its own prop types, so a
+ * consumer maps its data (a `ui_show` table surface, a tool result) to these
+ * props at its own boundary.
  */
 
+import {
+  Table,
+  TableBody,
+  TableCaption,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@vellumai/design-library";
 import { Check, Copy } from "lucide-react";
 import { useCallback, type ReactNode } from "react";
 
 import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
 import { useTranslation } from "@/i18n";
-import { cn } from "@/utils/misc";
 
 import { SelectionIndicator } from "@/domains/chat/components/surfaces/selection-indicator";
 
@@ -79,6 +88,10 @@ export function tableToMarkdown(
   return [header, separator, ...body].join("\n");
 }
 
+function widthStyle(column: DataTableColumn) {
+  return column.width ? { width: `${column.width}px` } : undefined;
+}
+
 export function DataTable({
   columns,
   rows,
@@ -95,7 +108,7 @@ export function DataTable({
   );
 
   return (
-    <div data-owns-horizontal-scroll="" className="overflow-x-auto">
+    <div>
       <div className="mb-1 flex justify-end">
         <button
           type="button"
@@ -111,22 +124,20 @@ export function DataTable({
           {copied ? t("tableSurface.copied") : t("tableSurface.copy")}
         </button>
       </div>
-      <table className="w-full text-left text-body-medium-lighter">
-        <thead>
-          <tr className="border-b border-[var(--border-subtle)]">
-            {selection && <th className="w-10 px-3 py-2" />}
+      {/* The host arbitrates horizontal gestures on the scroll container. */}
+      <Table containerProps={{ "data-owns-horizontal-scroll": "" }}>
+        {caption && <TableCaption>{caption}</TableCaption>}
+        <TableHeader>
+          <TableRow>
+            {selection && <TableHead className="w-10" />}
             {columns.map((col) => (
-              <th
-                key={col.id}
-                className="px-3 py-2 text-body-small-default text-[var(--content-quiet)]"
-                style={col.width ? { width: `${col.width}px` } : undefined}
-              >
+              <TableHead key={col.id} style={widthStyle(col)}>
                 {col.label}
-              </th>
+              </TableHead>
             ))}
-          </tr>
-        </thead>
-        <tbody className="divide-y divide-[var(--border-base)]">
+          </TableRow>
+        </TableHeader>
+        <TableBody>
           {rows.map((row) => {
             const isSelected =
               selection !== undefined && selection.selectedIds.includes(row.id);
@@ -134,36 +145,26 @@ export function DataTable({
               selection !== undefined && row.selectable !== false;
 
             return (
-              <tr
+              <TableRow
                 key={row.id}
+                interactive={rowSelectable}
+                selected={isSelected}
                 onClick={() => rowSelectable && selection.onToggle(row.id)}
-                className={cn(
-                  "transition-colors",
-                  rowSelectable &&
-                    "cursor-pointer hover:bg-[var(--surface-hover)]",
-                  isSelected && "bg-[var(--system-positive-weak)]",
-                )}
               >
                 {selection && (
-                  <td className="px-3 py-2">
+                  <TableCell>
                     {rowSelectable && (
                       <SelectionIndicator
                         selected={isSelected}
                         single={selection.mode === "single"}
                       />
                     )}
-                  </td>
+                  </TableCell>
                 )}
                 {columns.map((col) => {
                   const cell = row.cells[col.id];
                   return (
-                    <td
-                      key={col.id}
-                      className="px-3 py-2 text-[var(--content-default)]"
-                      style={
-                        col.width ? { width: `${col.width}px` } : undefined
-                      }
-                    >
+                    <TableCell key={col.id} style={widthStyle(col)}>
                       {typeof cell === "object" && cell.icon ? (
                         <span className="flex items-center gap-1.5">
                           {cell.icon}
@@ -172,20 +173,14 @@ export function DataTable({
                       ) : (
                         cellText(cell)
                       )}
-                    </td>
+                    </TableCell>
                   );
                 })}
-              </tr>
+              </TableRow>
             );
           })}
-        </tbody>
-      </table>
-
-      {caption && (
-        <p className="mt-2 text-body-small-default text-[var(--content-quiet)]">
-          {caption}
-        </p>
-      )}
+        </TableBody>
+      </Table>
     </div>
   );
 }
