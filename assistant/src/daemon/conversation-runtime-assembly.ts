@@ -903,6 +903,11 @@ export function buildChannelCapabilityBlock(
         "- Do NOT use markdown tables — use bullet lists instead. No markdown headers — use **bold** or CAPS for emphasis.",
       );
     }
+    if (caps.channel === "email") {
+      lines.push(
+        "- Conversation text is not emailed. To reply, run `assistant email send` (see `assistant email send --help`). Use `--reply-to` to keep the thread. Skip a reply only when none is needed.",
+      );
+    }
   }
 
   // Inject group chat etiquette only when the chat type indicates a multi-party
