@@ -61,6 +61,7 @@ export const KNOWN_LLM_PROVIDERS = [
   "litellm",
   "opencode",
   "baseten",
+  "ionet",
   "poolside",
   "jev",
   // Routing identities: "vellum" = the platform-managed route (upstream

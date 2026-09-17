@@ -1135,6 +1135,30 @@ export const MODELS_BY_PROVIDER = {
       supportsThinking: true,
     },
   ],
+  ionet: [
+    {
+      id: "meta-llama/Llama-3.3-70B-Instruct",
+      displayName: "Llama 3.3 70B Instruct",
+      contextWindowTokens: 131_072,
+      defaultContextWindowTokens: 131_072,
+      maxOutputTokens: 4_096,
+    },
+    {
+      id: "deepseek-ai/DeepSeek-R1-0528",
+      displayName: "DeepSeek R1 0528",
+      contextWindowTokens: 163_840,
+      defaultContextWindowTokens: 163_840,
+      maxOutputTokens: 65_536,
+      supportsThinking: true,
+    },
+    {
+      id: "openai/gpt-oss-120b",
+      displayName: "GPT-OSS 120B",
+      contextWindowTokens: 131_072,
+      defaultContextWindowTokens: 131_072,
+      maxOutputTokens: 65_536,
+    },
+  ],
   poolside: [
     {
       id: "poolside/laguna-s-2.1",
@@ -1193,6 +1217,7 @@ export const DEFAULT_MODEL_BY_PROVIDER: Record<LlmProviderId, string> = {
   litellm: "",
   opencode: "",
   baseten: "thinkingmachines/inkling",
+  ionet: "meta-llama/Llama-3.3-70B-Instruct",
   poolside: "poolside/laguna-s-2.1",
   jev: "jev-latest",
   vellum: "qwen/qwen3-8b",
@@ -1223,6 +1248,7 @@ export const PROVIDER_DISPLAY_NAMES: Record<string, string> = {
   litellm: "LiteLLM",
   opencode: "OpenCode",
   baseten: "Baseten",
+  ionet: "IO Intelligence",
   poolside: "Poolside",
   jev: "Jev",
 };
@@ -1279,6 +1305,7 @@ export const PROVIDER_SUPPORTS_PLATFORM_AUTH: Record<string, boolean> = {
   litellm: false,
   opencode: false,
   baseten: false,
+  ionet: false,
   poolside: false,
   jev: false,
   vellum: true,

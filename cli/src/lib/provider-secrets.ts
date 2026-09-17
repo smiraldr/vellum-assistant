@@ -76,6 +76,7 @@ const PROVIDER_LABELS: Record<LlmProviderId, string> = {
   litellm: "LiteLLM",
   opencode: "OpenCode",
   baseten: "Baseten",
+  ionet: "IO Intelligence",
   poolside: "Poolside",
   jev: "Jev",
 };
@@ -96,6 +97,7 @@ export const HATCH_PROVIDER_CHOICES: readonly LlmProviderId[] = [
   "minimax",
   "atlascloud",
   "baseten",
+  "ionet",
   "poolside",
 ];
 

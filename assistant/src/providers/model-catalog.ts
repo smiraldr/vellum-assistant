@@ -1,7 +1,9 @@
 import { PLATFORM_PROVIDER_META } from "./platform-proxy/constants.js";
 
 export type LongContextMode =
-  "native-model" | "provider-request-option" | "unsupported";
+  | "native-model"
+  | "provider-request-option"
+  | "unsupported";
 
 export interface CatalogModelPricingTier {
   /**
@@ -2491,6 +2493,52 @@ const RAW_PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     defaultModel: "thinkingmachines/inkling",
     apiKeyUrl: "https://app.baseten.co/settings/api_keys",
     apiKeyPlaceholder: "Your Baseten API key",
+  },
+  {
+    id: "ionet",
+    displayName: "IO Intelligence",
+    subtitle:
+      "Open models served by IO Intelligence, io.net's inference platform (OpenAI-compatible). Requires an IO Intelligence API key.",
+    setupMode: "api-key",
+    setupHint:
+      "Enter your IO Intelligence API key to enable IO Intelligence models.",
+    envVar: "IONET_API_KEY",
+    credentialsGuide: {
+      description: "Sign in to io.net and create an IO Intelligence API key.",
+      url: "https://io.net/docs/guides/intelligence/api-keys-and-secrets",
+      linkLabel: "Open io.net",
+    },
+    // Model ids are Hugging Face-style `org/name` and were verified against
+    // the live `GET /models` catalog (which serves 30+ models). Capability
+    // metadata comes from the upstream model cards.
+    models: [
+      {
+        id: "meta-llama/Llama-3.3-70B-Instruct",
+        displayName: "Llama 3.3 70B Instruct",
+        contextWindowTokens: 131072,
+        defaultContextWindowTokens: 131072,
+        maxOutputTokens: 4096,
+        supportsToolUse: true,
+      },
+      {
+        id: "deepseek-ai/DeepSeek-R1-0528",
+        displayName: "DeepSeek R1 0528",
+        contextWindowTokens: 163840,
+        defaultContextWindowTokens: 163840,
+        maxOutputTokens: 65536,
+        supportsThinking: true,
+      },
+      {
+        id: "openai/gpt-oss-120b",
+        displayName: "GPT-OSS 120B",
+        contextWindowTokens: 131072,
+        defaultContextWindowTokens: 131072,
+        maxOutputTokens: 65536,
+      },
+    ],
+    defaultModel: "meta-llama/Llama-3.3-70B-Instruct",
+    apiKeyUrl: "https://io.net/docs/guides/intelligence/api-keys-and-secrets",
+    apiKeyPlaceholder: "Your IO Intelligence API key",
   },
   {
     id: "poolside",
