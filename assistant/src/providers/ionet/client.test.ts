@@ -69,6 +69,63 @@ describe("IonetProvider", () => {
     );
   });
 
+  test("sends tool_choice auto when tools are offered without an explicit choice", async () => {
+    // io.net defaults an unspecified tool_choice to "none" (not OpenAI's
+    // "auto"), so the provider must send the explicit default or the model
+    // could never invoke an offered tool.
+    const provider = new IonetProvider(
+      "test-key",
+      "meta-llama/Llama-3.3-70B-Instruct",
+    );
+    const client = clientOf(provider);
+
+    let seenParams:
+      | {
+          tools?: unknown;
+          tool_choice?: unknown;
+        }
+      | undefined;
+    client.chat.completions.create = async (params) => {
+      seenParams = params as { tools?: unknown; tool_choice?: unknown };
+      return makeStream(OK_CHUNKS);
+    };
+    await provider.sendMessage(
+      [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      {
+        tools: [
+          {
+            name: "get_weather",
+            description: "Get the weather",
+            input_schema: { type: "object", properties: {} },
+          },
+        ],
+      },
+    );
+    expect(Array.isArray(seenParams?.tools)).toBe(true);
+    expect(seenParams?.tool_choice).toBe("auto");
+
+    // An explicit caller choice still wins.
+    let forcedParams: { tool_choice?: unknown } | undefined;
+    client.chat.completions.create = async (params) => {
+      forcedParams = params as { tool_choice?: unknown };
+      return makeStream(OK_CHUNKS);
+    };
+    await provider.sendMessage(
+      [{ role: "user", content: [{ type: "text", text: "hi" }] }],
+      {
+        tools: [
+          {
+            name: "get_weather",
+            description: "Get the weather",
+            input_schema: { type: "object", properties: {} },
+          },
+        ],
+        config: { tool_choice: { type: "none" } },
+      },
+    );
+    expect(forcedParams?.tool_choice).toBe("none");
+  });
+
   test("honours an explicit baseURL override", async () => {
     const provider = new IonetProvider("test-key", "test-model", {
       baseURL: "https://inference.example.test/v1",

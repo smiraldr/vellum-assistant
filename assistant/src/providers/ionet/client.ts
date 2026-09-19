@@ -28,6 +28,10 @@ export class IonetProvider extends OpenAIChatCompletionsProvider {
       // reasoning arrives as `reasoning_content`; replay it there so
       // follow-up requests that include tools stay acceptable upstream.
       assistantReasoningField: "reasoning_content",
+      // io.net defaults an unspecified `tool_choice` to "none" (unlike
+      // OpenAI's "auto"), so tools offered without an explicit choice must
+      // still send one or the model could never invoke them.
+      defaultToolChoiceAuto: true,
     });
   }
 }

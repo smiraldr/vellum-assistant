@@ -2528,6 +2528,7 @@ const RAW_PROVIDER_CATALOG: ProviderCatalogEntry[] = [
         defaultContextWindowTokens: 131070,
         maxOutputTokens: 98304,
         supportsThinking: true,
+        supportsCaching: true,
         supportsToolUse: true,
       },
       {
@@ -2535,7 +2536,8 @@ const RAW_PROVIDER_CATALOG: ProviderCatalogEntry[] = [
         displayName: "GPT-OSS 20B",
         contextWindowTokens: 64000,
         defaultContextWindowTokens: 64000,
-        maxOutputTokens: 65536,
+        maxOutputTokens: 32768,
+        supportsThinking: true,
         supportsToolUse: true,
       },
     ],

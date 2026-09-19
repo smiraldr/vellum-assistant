@@ -1140,6 +1140,7 @@ export const MODELS_BY_PROVIDER = {
     {
       id: "meta-llama/Llama-3.3-70B-Instruct",
       displayName: "Llama 3.3 70B Instruct",
+      vendor: "meta",
       contextWindowTokens: 128_000,
       defaultContextWindowTokens: 128_000,
       maxOutputTokens: 4_096,
@@ -1147,6 +1148,8 @@ export const MODELS_BY_PROVIDER = {
     {
       id: "zai-org/GLM-4.5-Air",
       displayName: "GLM 4.5 Air",
+      vendor: "zhipu",
+      family: "glm",
       contextWindowTokens: 131_070,
       defaultContextWindowTokens: 131_070,
       maxOutputTokens: 98_304,
@@ -1155,9 +1158,11 @@ export const MODELS_BY_PROVIDER = {
     {
       id: "openai/gpt-oss-20b",
       displayName: "GPT-OSS 20B",
+      vendor: "openai",
       contextWindowTokens: 64_000,
       defaultContextWindowTokens: 64_000,
-      maxOutputTokens: 65_536,
+      maxOutputTokens: 32_768,
+      supportsThinking: true,
     },
   ],
   poolside: [
