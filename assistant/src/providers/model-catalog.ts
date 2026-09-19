@@ -1,7 +1,9 @@
 import { PLATFORM_PROVIDER_META } from "./platform-proxy/constants.js";
 
 export type LongContextMode =
-  "native-model" | "provider-request-option" | "unsupported";
+  | "native-model"
+  | "provider-request-option"
+  | "unsupported";
 
 export interface CatalogModelPricingTier {
   /**
@@ -2492,6 +2494,54 @@ const RAW_PROVIDER_CATALOG: ProviderCatalogEntry[] = [
     defaultModel: "thinkingmachines/inkling",
     apiKeyUrl: "https://app.baseten.co/settings/api_keys",
     apiKeyPlaceholder: "Your Baseten API key",
+  },
+  {
+    id: "ionet",
+    displayName: "IO Intelligence",
+    subtitle:
+      "Open models served by IO Intelligence, io.net's inference platform (OpenAI-compatible). Requires an IO Intelligence API key.",
+    setupMode: "api-key",
+    setupHint:
+      "Enter your IO Intelligence API key to enable IO Intelligence models.",
+    envVar: "IONET_API_KEY",
+    credentialsGuide: {
+      description: "Sign in to io.net and create an IO Intelligence API key.",
+      url: "https://io.net/docs/guides/intelligence/api-keys-and-secrets",
+      linkLabel: "Open io.net",
+    },
+    // Model ids are Hugging Face-style `org/name`. Context windows and tool
+    // support come from the endpoint's live `GET /models` catalog, and every
+    // entry is accessible at the basic access tier.
+    models: [
+      {
+        id: "meta-llama/Llama-3.3-70B-Instruct",
+        displayName: "Llama 3.3 70B Instruct",
+        contextWindowTokens: 128000,
+        defaultContextWindowTokens: 128000,
+        maxOutputTokens: 4096,
+        supportsToolUse: true,
+      },
+      {
+        id: "zai-org/GLM-4.5-Air",
+        displayName: "GLM 4.5 Air",
+        contextWindowTokens: 131070,
+        defaultContextWindowTokens: 131070,
+        maxOutputTokens: 98304,
+        supportsThinking: true,
+        supportsToolUse: true,
+      },
+      {
+        id: "openai/gpt-oss-20b",
+        displayName: "GPT-OSS 20B",
+        contextWindowTokens: 64000,
+        defaultContextWindowTokens: 64000,
+        maxOutputTokens: 65536,
+        supportsToolUse: true,
+      },
+    ],
+    defaultModel: "meta-llama/Llama-3.3-70B-Instruct",
+    apiKeyUrl: "https://io.net/docs/guides/intelligence/api-keys-and-secrets",
+    apiKeyPlaceholder: "Your IO Intelligence API key",
   },
   {
     id: "poolside",
