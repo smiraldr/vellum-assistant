@@ -1146,16 +1146,6 @@ export const MODELS_BY_PROVIDER = {
       maxOutputTokens: 4_096,
     },
     {
-      id: "zai-org/GLM-4.5-Air",
-      displayName: "GLM 4.5 Air",
-      vendor: "zhipu",
-      family: "glm",
-      contextWindowTokens: 131_070,
-      defaultContextWindowTokens: 131_070,
-      maxOutputTokens: 98_304,
-      supportsThinking: true,
-    },
-    {
       id: "openai/gpt-oss-20b",
       displayName: "GPT-OSS 20B",
       vendor: "openai",

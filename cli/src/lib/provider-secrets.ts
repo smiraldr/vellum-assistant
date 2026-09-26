@@ -236,7 +236,6 @@ export function inferProviderFromModel(model: string): string | undefined {
   }
   if (
     model === "meta-llama/Llama-3.3-70B-Instruct" ||
-    model === "zai-org/GLM-4.5-Air" ||
     model === "openai/gpt-oss-20b"
   ) {
     // IO Intelligence (io.net) exclusives; the remaining meta-llama/ IDs

@@ -2522,16 +2522,6 @@ const RAW_PROVIDER_CATALOG: ProviderCatalogEntry[] = [
         supportsToolUse: true,
       },
       {
-        id: "zai-org/GLM-4.5-Air",
-        displayName: "GLM 4.5 Air",
-        contextWindowTokens: 131070,
-        defaultContextWindowTokens: 131070,
-        maxOutputTokens: 98304,
-        supportsThinking: true,
-        supportsCaching: true,
-        supportsToolUse: true,
-      },
-      {
         id: "openai/gpt-oss-20b",
         displayName: "GPT-OSS 20B",
         contextWindowTokens: 64000,
